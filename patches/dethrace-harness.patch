@@ -1,0 +1,1198 @@
+diff --git a/src/S3/include/s3/s3.h b/src/S3/include/s3/s3.h
+index f36700e..01ab850 100644
+--- a/src/S3/include/s3/s3.h
++++ b/src/S3/include/s3/s3.h
+@@ -27,6 +27,7 @@ typedef struct tS3_vector3 {
+ } tS3_vector3;
+ 
+ int S3Init(char* path, int low_memory_mode);
++int S3LoadExtraSoundbank(const char* pSoundbank_filename, const char* pDir, int pLow_memory_mode); // Wrecked Carmageddon
+ void S3Shutdown(void);
+ 
+ void S3Disable(void);
+diff --git a/src/S3/s3.c b/src/S3/s3.c
+index 8c438d5..2cfb9b8 100644
+--- a/src/S3/s3.c
++++ b/src/S3/s3.c
+@@ -267,6 +267,34 @@ int S3LoadSoundbank(const char* pSoundbank_filename, int pLow_memory_mode) {
+     return 0;
+ }
+ 
++// Wrecked Carmageddon: an extra sound bank with its files in pDir (ending in a separator), so SOUND.TXT stays untouched
++int S3LoadExtraSoundbank(const char* pSoundbank_filename, const char* pDir, int pLow_memory_mode) {
++    char soundbank_filename[256];
++    void* buffer;
++    tS3_soundbank_read_ctx read_ctx;
++    int count;
++
++    if (!gS3_enabled || strlen(pSoundbank_filename) >= sizeof(soundbank_filename)) {
++        return 1;
++    }
++    strcpy(soundbank_filename, pSoundbank_filename);
++    buffer = S3LoadSoundBankFile(soundbank_filename);
++    if (!buffer) {
++        return gS3_last_error;
++    }
++    read_ctx.data = (char*)buffer;
++    read_ctx.data_len = gS3_soundbank_buffer_len;
++    read_ctx.nlines = 0;
++    S3SoundBankReaderSkipWhitespace(&read_ctx);
++    count = 0;
++    while (S3SoundBankReadEntry(&read_ctx, (char*)pDir, pLow_memory_mode)) {
++        count++;
++    }
++    S3MemFree(buffer);
++    LOG_INFO3("%d sounds from %s", count, pSoundbank_filename);
++    return 0;
++}
++
+ // FUNCTION: CARM95 0x004997B5
+ char* S3LoadSoundBankFile(char* pThe_path) {
+     size_t bytes_read;
+diff --git a/src/S3/s3.h b/src/S3/s3.h
+index 52b9667..65d8e5e 100644
+--- a/src/S3/s3.h
++++ b/src/S3/s3.h
+@@ -39,6 +39,7 @@ int S3ReleaseSound(tS3_sound_id id);
+ 
+ char* S3LoadSoundBankFile(char* pThe_path);
+ int S3LoadSoundbank(const char* pSoundbank_filename, int pLow_memory_mode);
++int S3LoadExtraSoundbank(const char* pSoundbank_filename, const char* pDir, int pLow_memory_mode); // Wrecked Carmageddon
+ 
+ void S3SoundBankReaderNextLine(tS3_soundbank_read_ctx* ctx);
+ void S3SoundBankReaderSkipWhitespace(tS3_soundbank_read_ctx* ctx);
+diff --git a/src/harness/CMakeLists.txt b/src/harness/CMakeLists.txt
+index 47a9a1a..d1d0f03 100644
+--- a/src/harness/CMakeLists.txt
++++ b/src/harness/CMakeLists.txt
+@@ -38,6 +38,12 @@ else()
+     target_compile_definitions(harness PRIVATE BR_ENDIAN_LITTLE=1)
+ endif()
+ 
++# Wrecked Carmageddon: dev tools (test mode, CARMA_RACE, CARMA_TEST_SILENT, T music key), on in setup-native.sh
++option(CARMA_DEV "Include Wrecked Carmageddon's testing tools" OFF)
++if(CARMA_DEV)
++    target_compile_definitions(harness PRIVATE CARMA_DEV)
++endif()
++
+ target_sources(harness PRIVATE
+     include/harness/compiler.h
+     include/harness/hooks.h
+@@ -49,6 +55,8 @@ target_sources(harness PRIVATE
+     ascii_tables.h
+     harness_trace.c
+     harness.c
++    testmode.c
++    testmode.h
+     harness.h
+ 
+     "${CMAKE_CURRENT_BINARY_DIR}/version.h"
+@@ -69,6 +77,8 @@ elseif(WIN32)
+     target_link_libraries(harness PRIVATE dbghelp ws2_32 iphlpapi)
+ elseif(APPLE)
+     target_sources(harness PRIVATE os/macos.c)
++    # Wrecked Carmageddon: for Untranslocate() in os/macos.c
++    target_link_libraries(harness PRIVATE "-framework CoreFoundation")
+ elseif(UNIX)
+     target_sources(harness PRIVATE os/linux.c)
+ else()
+diff --git a/src/harness/audio/miniaudio.c b/src/harness/audio/miniaudio.c
+index 777eb2a..8265479 100644
+--- a/src/harness/audio/miniaudio.c
++++ b/src/harness/audio/miniaudio.c
+@@ -12,6 +12,7 @@
+ 
+ #define MINIAUDIO_IMPLEMENTATION
+ #include "miniaudio/miniaudio.h"
++#include <stdlib.h>
+ 
+ // Must come after miniaudio.h
+ #undef STB_VORBIS_HEADER_ONLY
+@@ -53,12 +54,24 @@ tAudioBackend_error_code AudioBackend_Init(void) {
+     ma_engine_config config;
+ 
+     config = ma_engine_config_init();
++    // Wrecked Carmageddon: CARMA_TEST_SILENT plays sound without a device, for tests
++#ifdef CARMA_DEV
++    if (getenv("CARMA_TEST_SILENT") != NULL) {
++        config.noDevice = MA_TRUE;
++        config.channels = 2;
++        config.sampleRate = 44100;
++    }
++#endif
+     result = ma_engine_init(&config, &engine);
+     if (result != MA_SUCCESS) {
+         printf("Failed to initialize audio engine.");
+         return eAB_error;
+     }
+-    LOG_INFO2("Playback device: '%s'", engine.pDevice->playback.name);
++    if (engine.pDevice != NULL) {
++        LOG_INFO2("Playback device: '%s'", engine.pDevice->playback.name);
++    } else {
++        LOG_INFO("Sound without a playback device");
++    }
+     ma_engine_set_volume(&engine, harness_game_config.volume_multiplier);
+     ma_engine_initialized = 1;
+ 
+diff --git a/src/harness/harness.c b/src/harness/harness.c
+index 47dda79..181aa1c 100644
+--- a/src/harness/harness.c
++++ b/src/harness/harness.c
+@@ -13,6 +13,9 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #include <sys/stat.h>
++#ifdef _WIN32
++#include <io.h>
++#endif
+ 
+ extern br_uint_32 gI_am_cheating;
+ extern int gSound_override;
+@@ -61,6 +64,7 @@ tHarness_platform gHarness_platform;
+ 
+ static int Harness_ProcessCommandLine(int* argc, char* argv[]);
+ static int Harness_ProcessIniFile(void);
++static void Harness_ProcessModIniFile(int argc, char* argv[]);
+ 
+ static int Harness_InitPlatform(void) {
+     int required_caps = 0;
+@@ -241,7 +245,9 @@ void Harness_DetectAndSetWorkingDirectory(char* argv0) {
+         path = env_var;
+     } else {
+         path = OS_GetWorkingDirectory(argv0);
+-        if (access("DATA/GENERAL.TXT", F_OK) == 0) {
++        // Wrecked Carmageddon: next to the program, not in the current directory (/ when started from the Finder)
++        snprintf(pref_path, sizeof(pref_path), "%s/DATA/GENERAL.TXT", path);
++        if (access(pref_path, F_OK) == 0) {
+             // good, found
+         } else {
+             OS_GetPrefPath(pref_path, "dethrace");
+@@ -258,6 +264,18 @@ void Harness_DetectAndSetWorkingDirectory(char* argv0) {
+     }
+ }
+ 
++// Wrecked Carmageddon: fatal startup error, on the console and in a window
++static void Harness_ShowStartupError(const char* pMessage) {
++    char message[512];
++
++    fprintf(stderr, "Error: %s\n", pMessage);
++    if (gHarness_platform.ShowErrorMessage != NULL) {
++        snprintf(message, sizeof(message), "%s", pMessage);
++        gHarness_platform.ShowErrorMessage("Carmageddon", message);
++    }
++    exit(1);
++}
++
+ int Harness_Init(int* argc, char* argv[]) {
+ 
+     printf("Dethrace version: %s\n", DETHRACE_VERSION);
+@@ -296,6 +314,7 @@ int Harness_Init(int* argc, char* argv[]) {
+ 
+     // first load ini file if exists
+     Harness_ProcessIniFile();
++    Harness_ProcessModIniFile(*argc, argv);
+ 
+     // then override any config options with command line args
+     if (Harness_ProcessCommandLine(argc, argv) != 0) {
+@@ -314,13 +333,22 @@ int Harness_Init(int* argc, char* argv[]) {
+ 
+     Harness_DetectAndSetWorkingDirectory(argv[0]);
+ 
++    // Wrecked Carmageddon: also in a window, as there is usually no console
++    if (access("DATA/GENERAL.TXT", F_OK) != 0) {
++#ifdef __APPLE__
++        Harness_ShowStartupError("Carmageddon's game files aren't here, or macOS isn't letting the game read them.\n\nPut the app in the Carmageddon folder, the one with the DATA folder in it, and start it from there. If it's there already and the folder is in Downloads, Documents or Desktop, move the folder to another place, for example your home folder.");
++#else
++        Harness_ShowStartupError("Carmageddon's game files aren't here.\n\nPut this program in the Carmageddon folder, the one with the DATA folder in it, and start it from there.");
++#endif
++    }
++
+     if (harness_game_info.mode == eGame_none) {
+         Harness_DetectGameMode();
+     }
+ 
+     if (harness_game_config.opengl_3dfx_mode && !harness_game_info.data_dir_has_3dfx_assets) {
+-        printf("Error: data directory does not contain 3dfx assets so opengl mode cannot be used\n");
+-        exit(1);
++        // Wrecked Carmageddon: in a window too
++        Harness_ShowStartupError("This copy of Carmageddon has no 3dfx graphics (DATA/PIXELMAP/SMOKE.PIX is missing), which the OpenGL renderer needs.");
+     }
+ 
+     return 0;
+@@ -418,6 +446,15 @@ int Harness_ProcessCommandLine(int* argc, char* argv[]) {
+         } else if (strcasecmp(argv[i], "--window") == 0) {
+             harness_game_config.start_full_screen = 0;
+             consumed = 1;
++#ifdef CARMA_DEV
++        } else if (strncasecmp(argv[i], "--test-script=", 14) == 0) {
++            strncpy(harness_game_config.test_script, argv[i] + 14, sizeof(harness_game_config.test_script) - 1);
++            harness_game_config.start_full_screen = 0;
++            consumed = 1;
++        } else if (strncasecmp(argv[i], "--test-output=", 14) == 0) {
++            strncpy(harness_game_config.test_output, argv[i] + 14, sizeof(harness_game_config.test_output) - 1);
++            consumed = 1;
++#endif
+         } else if (strcasecmp(argv[i], "--gore-check") == 0) {
+             harness_game_config.gore_check = 1;
+             consumed = 1;
+@@ -472,6 +509,15 @@ static int Harness_Ini_Callback(void* user, const char* section, const char* nam
+         harness_game_config.game_dirs_count++;
+     }
+ 
++    // Wrecked Carmageddon: [Environment] sets environment variables, for the mod's CARMA_* settings
++    else if (strcmp(section, "Environment") == 0) {
++#ifdef _WIN32
++        _putenv_s(name, value);
++#else
++        setenv(name, value, 1);
++#endif
++    }
++
+     else if (MATCH("General", "CdCheck")) {
+         harness_game_config.enable_cd_check = (value[0] == '1');
+     } else if (MATCH("General", "GoreCheck")) {
+@@ -571,6 +617,72 @@ int Harness_ProcessIniFile(void) {
+     return 0;
+ }
+ 
++// Wrecked Carmageddon: started from Explorer or the Finder, output goes nowhere, so a mod install logs to
++// MOD_FOLDER/dethrace.log for bug reports. Output to a console, pipe or file is left alone.
++static int Harness_OutputIsLost(void) {
++#ifdef _WIN32
++    return _fileno(stdout) < 0 || _get_osfhandle(_fileno(stdout)) < 0;
++#else
++    struct stat out, null_device;
++    if (fstat(fileno(stdout), &out) != 0) {
++        return 1;
++    }
++    return stat("/dev/null", &null_device) == 0 && out.st_dev == null_device.st_dev && out.st_ino == null_device.st_ino;
++#endif
++}
++
++static void Harness_OpenModLog(const char* dir) {
++    char path[1100];
++    struct stat st;
++    FILE* f;
++
++    snprintf(path, sizeof(path), "%s/" MOD_FOLDER, dir);
++    if (stat(path, &st) != 0 || !Harness_OutputIsLost()) {
++        return;
++    }
++    snprintf(path, sizeof(path), "%s/" MOD_FOLDER "/dethrace.log", dir);
++    f = fopen(path, "w");
++    if (f == NULL) {
++        return;
++    }
++    fclose(f);
++    // Append, unbuffered: stdout and stderr don't overwrite each other and a crash loses nothing
++    harness_plain_log = 1;
++    if (freopen(path, "a", stdout) != NULL) {
++        setvbuf(stdout, NULL, _IONBF, 0);
++    }
++    if (freopen(path, "a", stderr) != NULL) {
++        setvbuf(stderr, NULL, _IONBF, 0);
++    }
++}
++
++// Wrecked Carmageddon: MOD_FOLDER/dethrace.ini in the game folder; read after the user's dethrace.ini and before the
++// command line, which wins
++static void Harness_ProcessModIniFile(int argc, char* argv[]) {
++    char dir[1024];
++    char path[1100];
++    const char* given = NULL;
++    int i;
++
++    for (i = 1; i < argc - 1; i++) {
++        if (strcasecmp(argv[i], "--dir") == 0) {
++            given = argv[i + 1];
++        }
++    }
++    if (given == NULL) {
++        given = getenv("DETHRACE_ROOT_DIR");
++    }
++    if (given == NULL) {
++        given = OS_GetWorkingDirectory(argv[0]);
++    }
++    safe_strcpy(dir, given);
++    Harness_OpenModLog(dir);
++    snprintf(path, sizeof(path), "%s/" MOD_FOLDER "/dethrace.ini", dir);
++    if (ini_parse(path, Harness_Ini_Callback, NULL) >= 0) {
++        LOG_INFO2("Loaded mod settings from %s", path);
++    }
++}
++
+ // Filesystem hooks
+ FILE* Harness_Hook_fopen(const char* pathname, const char* mode) {
+     return OS_fopen(pathname, mode);
+diff --git a/src/harness/harness_trace.c b/src/harness/harness_trace.c
+index cd9d709..36965bf 100644
+--- a/src/harness/harness_trace.c
++++ b/src/harness/harness_trace.c
+@@ -3,20 +3,31 @@
+ #include <stdarg.h>
+ #include <stddef.h>
+ #include <stdio.h>
++#include <string.h>
+ #include <sys/types.h>
+ 
+ int harness_debug_level = 4;
++int harness_plain_log = 0;
++
++// Wrecked Carmageddon: no colour codes when logging to a file
++static const char* Plain(const char* fmt) {
++    const char* end;
++    if (harness_plain_log && fmt[0] == '\033' && (end = strchr(fmt, 'm')) != NULL) {
++        return end + 1;
++    }
++    return fmt;
++}
+ 
+ void debug_printf(const char* fmt, const char* fn, const char* fmt2, ...) {
+     va_list ap;
+ 
+-    printf(fmt, fn);
++    printf(Plain(fmt), fn);
+ 
+     va_start(ap, fmt2);
+     vprintf(fmt2, ap);
+     va_end(ap);
+ 
+-    puts("\033[0m");
++    puts(harness_plain_log ? "" : "\033[0m");
+ }
+ 
+ void panic_printf(const char* fmt, const char* fn, const char* fmt2, ...) {
+@@ -24,7 +35,7 @@ void panic_printf(const char* fmt, const char* fn, const char* fmt2, ...) {
+ 
+     FILE* fp = fopen("dethrace.log", "w");
+ 
+-    puts("\033[0;31m");
++    puts(harness_plain_log ? "" : "\033[0;31m");
+     printf(fmt, fn);
+ 
+     if (fp != NULL) {
+@@ -40,5 +51,5 @@ void panic_printf(const char* fmt, const char* fn, const char* fmt2, ...) {
+     if (fp != NULL) {
+         fclose(fp);
+     }
+-    puts("\033[0m");
++    puts(harness_plain_log ? "" : "\033[0m");
+ }
+diff --git a/src/harness/include/harness/config.h b/src/harness/include/harness/config.h
+index 3464244..17a2ec3 100644
+--- a/src/harness/include/harness/config.h
++++ b/src/harness/include/harness/config.h
+@@ -3,6 +3,9 @@
+ 
+ #define MAX_PATH 1024
+ 
++// Wrecked Carmageddon: the mod's folder, next to DATA: settings, textures and sounds
++#define MOD_FOLDER "wrecked-carmageddon"
++
+ typedef enum tHarness_game_type {
+     eGame_none,
+     eGame_carmageddon,
+@@ -67,6 +70,9 @@ typedef struct tHarness_game_config {
+     int game_dirs_count;
+     tHarness_game_dir game_dirs[10];
+     char default_game[256];
++
++    char test_script[MAX_PATH];
++    char test_output[MAX_PATH];
+ } tHarness_game_config;
+ 
+ extern tHarness_game_info harness_game_info;
+diff --git a/src/harness/include/harness/trace.h b/src/harness/include/harness/trace.h
+index 4d3d9bc..b421e93 100644
+--- a/src/harness/include/harness/trace.h
++++ b/src/harness/include/harness/trace.h
+@@ -5,6 +5,7 @@
+ #include <stdlib.h>
+ 
+ extern int harness_debug_level;
++extern int harness_plain_log;
+ 
+ void debug_printf(const char* fmt, const char* fn, const char* fmt2, ...);
+ void panic_printf(const char* fmt, const char* fn, const char* fmt2, ...);
+diff --git a/src/harness/os/macos.c b/src/harness/os/macos.c
+index a2d6861..21132a2 100644
+--- a/src/harness/os/macos.c
++++ b/src/harness/os/macos.c
+@@ -4,7 +4,9 @@
+ #include "harness/os.h"
+ #include <arpa/inet.h>
+ #include <assert.h>
++#include <CoreFoundation/CoreFoundation.h>
+ #include <dirent.h>
++#include <dlfcn.h>
+ #include <err.h>
+ #include <errno.h>
+ #include <execinfo.h>
+@@ -324,14 +326,55 @@ char* OS_Basename(const char* path) {
+     return basename(name_buf);
+ }
+ 
++// Wrecked Carmageddon: until moved, a downloaded app runs from a random read-only copy (App Translocation) and can't
++// find the game folder; this maps the path back. The Security framework functions aren't in its headers, hence dlsym.
++static void Untranslocate(char* pPath, size_t pSize) {
++    typedef Boolean (*is_translocated_fn)(CFURLRef, bool*, CFErrorRef*);
++    typedef CFURLRef (*original_path_fn)(CFURLRef, CFErrorRef*);
++    void* security;
++    is_translocated_fn is_translocated;
++    original_path_fn original_path;
++    CFURLRef url;
++    CFURLRef original;
++    bool translocated = false;
++
++    security = dlopen("/System/Library/Frameworks/Security.framework/Security", RTLD_LAZY);
++    if (security == NULL) {
++        return;
++    }
++    is_translocated = (is_translocated_fn)dlsym(security, "SecTranslocateIsTranslocatedURL");
++    original_path = (original_path_fn)dlsym(security, "SecTranslocateCreateOriginalPathForURL");
++    url = CFURLCreateFromFileSystemRepresentation(NULL, (const UInt8*)pPath, strlen(pPath), false);
++    if (is_translocated != NULL && original_path != NULL && url != NULL && is_translocated(url, &translocated, NULL) && translocated) {
++        original = original_path(url, NULL);
++        if (original != NULL) {
++            CFURLGetFileSystemRepresentation(original, true, (UInt8*)pPath, pSize);
++            CFRelease(original);
++        }
++    }
++    if (url != NULL) {
++        CFRelease(url);
++    }
++}
++
+ char* OS_GetWorkingDirectory(char* argv0) {
++    // Wrecked Carmageddon: from the executable's real, untranslocated path; argv[0] can be relative
++    static char path[PATH_MAX];
++    char exe[PATH_MAX];
++    uint32_t size = sizeof(exe);
++    char* bundlePath;
++
++    if (_NSGetExecutablePath(exe, &size) != 0 || realpath(exe, path) == NULL) {
++        snprintf(path, sizeof(path), "%s", argv0);
++    }
++    Untranslocate(path, sizeof(path));
+     // The application executable in a MacOS bundle is in <bundle.app>/Contents/MacOS/executable
+     // We strip off the bundle paths to get the path that the <bundle.app> is located in
+-    char* bundlePath = strstr(argv0, ".app/Contents/MacOS");
++    bundlePath = strstr(path, ".app/Contents/MacOS");
+     if (bundlePath != NULL) {
+         *bundlePath = '\0';
+     }
+-    return OS_Dirname(argv0);
++    return OS_Dirname(path);
+ }
+ 
+ int OS_GetPrefPath(char* dest, char* app) {
+diff --git a/src/harness/os/windows.c b/src/harness/os/windows.c
+index f906b42..05d0ae1 100644
+--- a/src/harness/os/windows.c
++++ b/src/harness/os/windows.c
+@@ -42,7 +42,7 @@ static int stack_nbr = 0;
+ static char windows_program_name[1024];
+ static char path_addr2line[1024];
+ 
+-static char dirname_buf[_MAX_DIR];
++static char dirname_buf[_MAX_DRIVE + _MAX_DIR];
+ static char fname_buf[_MAX_FNAME];
+ 
+ static LPTOP_LEVEL_EXCEPTION_FILTER prevUnhandledExceptionFilter;
+@@ -401,7 +401,12 @@ size_t OS_ConsoleReadPassword(char* pBuffer, size_t pBufferLen) {
+ }
+ 
+ char* OS_Dirname(const char* path) {
+-    _splitpath(path, NULL, dirname_buf, NULL, NULL);
++    // Wrecked Carmageddon: keep the drive, so a game on another drive is found
++    char drive[_MAX_DRIVE];
++    char dir[_MAX_DIR];
++
++    _splitpath(path, drive, dir, NULL, NULL);
++    snprintf(dirname_buf, sizeof(dirname_buf), "%s%s", drive, dir);
+     return dirname_buf;
+ }
+ 
+@@ -411,7 +416,14 @@ char* OS_Basename(const char* path) {
+ }
+ 
+ char* OS_GetWorkingDirectory(char* argv0) {
+-    return OS_Dirname(argv0);
++    // Wrecked Carmageddon: from the executable's full path; argv[0] can be relative
++    static char path[MAX_PATH];
++    DWORD len = GetModuleFileNameA(NULL, path, sizeof(path));
++
++    if (len == 0 || len >= sizeof(path)) {
++        return OS_Dirname(argv0);
++    }
++    return OS_Dirname(path);
+ }
+ 
+ int OS_GetPrefPath(char* dest, char* app) {
+diff --git a/src/harness/platforms/sdl2.c b/src/harness/platforms/sdl2.c
+index c8fe416..f4a90bd 100644
+--- a/src/harness/platforms/sdl2.c
++++ b/src/harness/platforms/sdl2.c
+@@ -1,3 +1,5 @@
++#include <stdio.h>
++#include <stdlib.h>
+ #include <SDL.h>
+ 
+ #include "harness.h"
+@@ -6,6 +8,7 @@
+ #include "harness/trace.h"
+ #include "sdl2_scancode_map.h"
+ #include "sdl2_syms.h"
++#include "../testmode.h"
+ 
+ SDL_COMPILE_TIME_ASSERT(sdl2_platform_requires_SDL2, SDL_MAJOR_VERSION == 2);
+ 
+@@ -33,7 +36,6 @@ static struct {
+ 
+ // Callbacks back into original game code
+ extern void QuitGame(void);
+-extern br_pixelmap* gBack_screen;
+ 
+ #ifdef DETHRACE_SDL_DYNAMIC
+ #ifdef _WIN32
+@@ -84,7 +86,7 @@ static void calculate_viewport(int window_width, int window_height) {
+     float aspect_ratio;
+ 
+     aspect_ratio = (float)window_width / window_height;
+-    target_aspect_ratio = (float)gBack_screen->width / gBack_screen->height;
++    target_aspect_ratio = (float)render_width / render_height;
+ 
+     vp_width = window_width;
+     vp_height = window_height;
+@@ -97,8 +99,20 @@ static void calculate_viewport(int window_width, int window_height) {
+     }
+     viewport.x = (window_width - vp_width) / 2;
+     viewport.y = (window_height - vp_height) / 2;
+-    viewport.scale_x = (float)vp_width / gBack_screen->width;
+-    viewport.scale_y = (float)vp_height / gBack_screen->height;
++    viewport.scale_x = (float)vp_width / render_width;
++    viewport.scale_y = (float)vp_height / render_height;
++}
++
++// In OpenGL mode the viewport is in drawable pixels (twice the window size on Retina)
++static void update_viewport(void) {
++    int width, height;
++
++    if (gl_context != NULL) {
++        SDL2_GL_GetDrawableSize(window, &width, &height);
++    } else {
++        SDL2_GetWindowSize(window, &width, &height);
++    }
++    calculate_viewport(width, height);
+ }
+ 
+ static int SDL2_Harness_SetWindowPos(void* hWnd, int x, int y, int nWidth, int nHeight) {
+@@ -126,9 +140,38 @@ static int is_only_key_modifier(int modifier_flags, int flag_check) {
+     return (modifier_flags & flag_check) && (modifier_flags & (KMOD_CTRL | KMOD_SHIFT | KMOD_ALT | KMOD_GUI)) == (modifier_flags & flag_check);
+ }
+ 
++// Wrecked Carmageddon: test-mode key input, straight into the game's key state
++static int TestModeSetKey(const char* pKey_name, int pDown) {
++    SDL_Scancode scancode;
++    int dethrace_scancode;
++
++    scancode = SDL2_GetScancodeFromName(pKey_name);
++    if (scancode == SDL_SCANCODE_UNKNOWN || (dethrace_scancode = sdl_scancode_map[scancode]) == 0) {
++        return 0;
++    }
++    if (pDown) {
++        key_state[dethrace_scancode >> 5] |= (1 << (dethrace_scancode & 0x1F));
++    } else {
++        key_state[dethrace_scancode >> 5] &= ~(1 << (dethrace_scancode & 0x1F));
++    }
++    gKeyHandler_func();
++    return 1;
++}
++
+ static void SDL2_Harness_ProcessWindowMessages(void) {
+     SDL_Event event;
+ 
++    if (TestMode_Active()) {
++        // No real input in test mode: drain the queue and run the script
++        while (SDL2_PollEvent(&event)) {
++            if (event.type == SDL_QUIT) {
++                QuitGame();
++            }
++        }
++        TestMode_Tick(SDL2_GetTicks(), TestModeSetKey);
++        return;
++    }
++
+     while (SDL2_PollEvent(&event)) {
+         switch (event.type) {
+         case SDL_KEYDOWN:
+@@ -165,8 +208,8 @@ static void SDL2_Harness_ProcessWindowMessages(void) {
+             break;
+ 
+         case SDL_WINDOWEVENT:
+-            if (event.window.event == SDL_WINDOWEVENT_RESIZED) {
+-                calculate_viewport(event.window.data1, event.window.data2);
++            if (event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
++                update_viewport();
+             }
+             break;
+ 
+@@ -210,10 +253,13 @@ static int SDL2_Harness_GetMousePosition(int* pX, int* pY) {
+         // software renderer
+         SDL2_RenderWindowToLogical(renderer, *pX, *pY, &lX, &lY);
+     } else {
+-        // hardware renderer
+-        // handle case where window is stretched larger than the pixel size
+-        lX = *pX * (640.0f / window_width);
+-        lY = *pY * (480.0f / window_height);
++        // hardware renderer: map window points to drawable pixels, then into the letterboxed viewport
++        int drawable_width, drawable_height;
++        SDL2_GL_GetDrawableSize(window, &drawable_width, &drawable_height);
++        lX = (*pX * ((float)drawable_width / window_width) - viewport.x) / viewport.scale_x;
++        lY = (*pY * ((float)drawable_height / window_height) - viewport.y) / viewport.scale_y;
++        lX = SDL_clamp(lX, 0, render_width - 1);
++        lY = SDL_clamp(lY, 0, render_height - 1);
+     }
+     *pX = (int)lX;
+     *pY = (int)lY;
+@@ -257,22 +303,35 @@ static void SDL2_Harness_CreateWindow(const char* title, int width, int height,
+         window_height = 480;
+     }
+ 
++    // Wrecked Carmageddon: test mode runs as a background app with a hidden window, so it never takes focus
++    if (TestMode_Init()) {
++        SDL2_SetHint("SDL_MAC_BACKGROUND_APP", "1");
++    }
++
+     if (SDL2_Init(SDL_INIT_VIDEO) != 0) {
+         LOG_PANIC2("SDL_INIT_VIDEO error: %s", SDL2_GetError());
+     }
+ 
+     extra_window_flags = SDL_WINDOW_RESIZABLE;
+-    if (harness_game_config.start_full_screen) {
++    if (harness_game_config.start_full_screen && !TestMode_Active()) {
+         extra_window_flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+     }
++    if (TestMode_Active()) {
++        extra_window_flags |= SDL_WINDOW_HIDDEN;
++        // CARMA_TEST_WINDOW=WxH sizes the hidden window, to test other aspect ratios
++        if (getenv("CARMA_TEST_WINDOW") != NULL) {
++            sscanf(getenv("CARMA_TEST_WINDOW"), "%dx%d", &window_width, &window_height);
++        }
++    }
+ 
+     if (window_type == eWindow_type_opengl) {
+ 
++        // Full display resolution (HiDPI), 4x antialiasing
+         window = SDL2_CreateWindow(title,
+             SDL_WINDOWPOS_CENTERED,
+             SDL_WINDOWPOS_CENTERED,
+             window_width, window_height,
+-            extra_window_flags | SDL_WINDOW_OPENGL);
++            extra_window_flags | SDL_WINDOW_OPENGL | SDL_WINDOW_ALLOW_HIGHDPI);
+ 
+         if (window == NULL) {
+             LOG_PANIC2("Failed to create window: %s", SDL2_GetError());
+@@ -281,8 +340,16 @@ static void SDL2_Harness_CreateWindow(const char* title, int width, int height,
+         SDL2_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+         SDL2_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+         SDL2_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
++        SDL2_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
++        SDL2_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 4);
+         gl_context = SDL2_GL_CreateContext(window);
+ 
++        if (gl_context == NULL) {
++            LOG_WARN2("Failed to create OpenGL context with antialiasing: %s. Trying without...", SDL2_GetError());
++            SDL2_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 0);
++            SDL2_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 0);
++            gl_context = SDL2_GL_CreateContext(window);
++        }
+         if (gl_context == NULL) {
+             LOG_WARN2("Failed to create OpenGL core profile: %s. Trying OpenGLES...", SDL2_GetError());
+             SDL2_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+@@ -329,6 +396,33 @@ static void SDL2_Harness_CreateWindow(const char* title, int width, int height,
+     viewport.y = 0;
+     viewport.scale_x = 1;
+     viewport.scale_y = 1;
++
++    if (gl_context != NULL) {
++        int drawable_width, drawable_height, samples = 0;
++        update_viewport();
++        SDL2_GL_GetDrawableSize(window, &drawable_width, &drawable_height);
++        SDL2_GL_GetAttribute(SDL_GL_MULTISAMPLESAMPLES, &samples);
++        LOG_INFO3("OpenGL drawable %dx%d", drawable_width, drawable_height);
++        LOG_INFO2("OpenGL antialiasing samples: %d", samples);
++    }
++}
++
++static void SaveTestScreenshot(void) {
++    typedef void (*read_buffer_fn)(unsigned int);
++    typedef void (*read_pixels_fn)(int, int, int, int, unsigned int, unsigned int, void*);
++    read_buffer_fn read_buffer;
++    read_pixels_fn read_pixels;
++    unsigned char* pixels;
++    int width, height;
++
++    read_buffer = (read_buffer_fn)SDL2_GL_GetProcAddress("glReadBuffer");
++    read_pixels = (read_pixels_fn)SDL2_GL_GetProcAddress("glReadPixels");
++    SDL2_GL_GetDrawableSize(window, &width, &height);
++    pixels = malloc((size_t)width * height * 4);
++    read_buffer(0x0405 /* GL_BACK */);
++    read_pixels(0, 0, width, height, 0x1908 /* GL_RGBA */, 0x1401 /* GL_UNSIGNED_BYTE */, pixels);
++    TestMode_SaveScreenshot(width, height, pixels);
++    free(pixels);
+ }
+ 
+ static void SDL2_Harness_Swap(br_pixelmap* back_buffer) {
+@@ -340,7 +434,11 @@ static void SDL2_Harness_Swap(br_pixelmap* back_buffer) {
+     SDL2_Harness_ProcessWindowMessages();
+ 
+     if (gl_context != NULL) {
++        if (TestMode_ScreenshotPath() != NULL) {
++            SaveTestScreenshot();
++        }
+         SDL2_GL_SwapWindow(window);
++        update_viewport();
+     } else {
+         src_pixels = back_buffer->pixels;
+ 
+diff --git a/src/harness/platforms/sdl2_syms.h b/src/harness/platforms/sdl2_syms.h
+index 1b05610..984d240 100644
+--- a/src/harness/platforms/sdl2_syms.h
++++ b/src/harness/platforms/sdl2_syms.h
+@@ -35,11 +35,15 @@
+     X(GetPixelFormatName, const char*, (Uint32))                                        \
+     X(GetScancodeName, const char*, (SDL_Scancode))                                     \
+     X(GL_CreateContext, SDL_GLContext, (SDL_Window*))                                   \
++    X(GL_GetAttribute, int, (SDL_GLattr, int*))                                         \
++    X(GL_GetDrawableSize, void, (SDL_Window*, int*, int*))                              \
+     X(GL_GetProcAddress, void*, (const char*))                                          \
+     X(GL_SetAttribute, int, (SDL_GLattr, int))                                          \
+     X(GL_SetSwapInterval, int, (int))                                                   \
+     X(GL_SwapWindow, void, (SDL_Window*))                                               \
+     X(GetPrefPath, char*, (const char* org, const char* app))                           \
++    X(SetHint, SDL_bool, (const char*, const char*))                                    \
++    X(GetScancodeFromName, SDL_Scancode, (const char*))                                 \
+     X(free, void, (void*))
+ 
+ #endif /* sdl2_syms_h */
+diff --git a/src/harness/testmode.c b/src/harness/testmode.c
+new file mode 100644
+index 0000000..770f2e5
+--- /dev/null
++++ b/src/harness/testmode.c
+@@ -0,0 +1,381 @@
++#ifdef CARMA_DEV
++
++// Scripted test mode (--test-script=FILE): hidden window, keys from the script, screenshots, state dumps.
++// Script commands are listed in the README; see tools/test_game.sh.
++#include "testmode.h"
++#include "harness/config.h"
++
++#include <ctype.h>
++#include <stdarg.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/stat.h>
++#ifdef _WIN32
++#include <direct.h>
++#endif
++
++// Provided by the game (common/carmatest.c)
++extern int Carma_TestIsRacing(void);
++extern void Carma_TestDumpState(void);
++extern void Carma_TestBlastProp(void);
++extern void Carma_TestBlastCar(void);
++extern void Carma_TestIgniteCar(void);
++extern void Carma_TestGotoWater(void);
++extern void Carma_TestDiveWater(void);
++
++#define MAX_LINES 1024
++#define MAX_HELD 16
++
++typedef struct {
++    char command[24];
++    char text[200];
++    int number;
++    int number2;
++    int line_number;
++} tTest_line;
++
++static struct {
++    int active;
++    tTest_line lines[MAX_LINES];
++    int count;
++    int pc;
++    unsigned next_time;
++    unsigned wait_until;
++    int waiting_racing;
++    struct {
++        char key[32];
++        unsigned release_time;
++    } held[MAX_HELD];
++    char screenshot[1024];
++    int screenshots_taken;
++    unsigned start_time;
++    unsigned timeout_ms;
++    tTest_set_key_cb* set_key;
++} gTest;
++
++static void TestLog(unsigned now, const char* format, ...) {
++    va_list ap;
++
++    printf("[test %7.2fs] ", (now - gTest.start_time) / 1000.f);
++    va_start(ap, format);
++    vprintf(format, ap);
++    va_end(ap);
++    printf("\n");
++    fflush(stdout);
++}
++
++int TestMode_Active(void) {
++    return gTest.active;
++}
++
++int TestMode_Init(void) {
++    FILE* f;
++    char buf[512];
++    char* p;
++    int line_number;
++    const char* timeout;
++    tTest_line* l;
++
++    if (harness_game_config.test_script[0] == '\0') {
++        return 0;
++    }
++    f = fopen(harness_game_config.test_script, "r");
++    if (f == NULL) {
++        fprintf(stderr, "test mode: can't read %s\n", harness_game_config.test_script);
++        exit(2);
++    }
++    line_number = 0;
++    while (fgets(buf, sizeof(buf), f) != NULL && gTest.count < MAX_LINES) {
++        line_number++;
++        if ((p = strchr(buf, '#')) != NULL) {
++            *p = '\0';
++        }
++        for (p = buf + strlen(buf); p > buf && isspace((unsigned char)p[-1]); p--) {
++            p[-1] = '\0';
++        }
++        for (p = buf; isspace((unsigned char)*p); p++) {
++        }
++        if (*p == '\0') {
++            continue;
++        }
++        l = &gTest.lines[gTest.count++];
++        memset(l, 0, sizeof(*l));
++        l->line_number = line_number;
++        sscanf(p, "%23s", l->command);
++        p += strlen(l->command);
++        while (isspace((unsigned char)*p)) {
++            p++;
++        }
++        strncpy(l->text, p, sizeof(l->text) - 1);
++        l->number = -1;
++        l->number2 = -1;
++        if (sscanf(p, "%d", &l->number) != 1) {
++            char word[64];
++            if (sscanf(p, "%63s %d", word, &l->number2) < 2) {
++                l->number2 = -1;
++            }
++        }
++    }
++    fclose(f);
++    if (harness_game_config.test_output[0] == '\0') {
++        strcpy(harness_game_config.test_output, "/tmp/carma_test");
++    }
++#ifdef _WIN32
++    _mkdir(harness_game_config.test_output);
++#else
++    mkdir(harness_game_config.test_output, 0755);
++#endif
++    timeout = getenv("CARMA_TEST_TIMEOUT");
++    gTest.timeout_ms = (timeout != NULL ? atoi(timeout) : 600) * 1000u;
++    gTest.active = 1;
++    return 1;
++}
++
++static int SetKey(const char* key, int down) {
++    if (!gTest.set_key(key, down)) {
++        fprintf(stderr, "test mode: unknown key '%s'\n", key);
++        return 0;
++    }
++    return 1;
++}
++
++static void HoldKey(const char* key, unsigned release_time) {
++    int i;
++
++    if (!SetKey(key, 1)) {
++        return;
++    }
++    for (i = 0; i < MAX_HELD; i++) {
++        if (gTest.held[i].key[0] == '\0') {
++            strncpy(gTest.held[i].key, key, sizeof(gTest.held[i].key) - 1);
++            gTest.held[i].release_time = release_time;
++            return;
++        }
++    }
++}
++
++void TestMode_Tick(unsigned now, tTest_set_key_cb* set_key) {
++    tTest_line* l;
++    char key[64];
++    int i;
++
++    gTest.set_key = set_key;
++    if (gTest.start_time == 0) {
++        gTest.start_time = now;
++        gTest.next_time = now;
++        TestLog(now, "running %s, %d commands, screenshots in %s", harness_game_config.test_script, gTest.count, harness_game_config.test_output);
++    }
++    if (now - gTest.start_time > gTest.timeout_ms) {
++        TestLog(now, "timeout, quitting");
++        exit(3);
++    }
++    for (i = 0; i < MAX_HELD; i++) {
++        if (gTest.held[i].key[0] != '\0' && now >= gTest.held[i].release_time) {
++            SetKey(gTest.held[i].key, 0);
++            gTest.held[i].key[0] = '\0';
++        }
++    }
++
++    while (gTest.pc < gTest.count && now >= gTest.next_time && gTest.screenshot[0] == '\0') {
++        l = &gTest.lines[gTest.pc];
++        key[0] = '\0';
++        sscanf(l->text, "%63s", key);
++
++        if (strcmp(l->command, "wait_racing") == 0) {
++            if (!gTest.waiting_racing) {
++                gTest.waiting_racing = 1;
++                gTest.wait_until = now + (l->number > 0 ? (unsigned)l->number : 60000u);
++                TestLog(now, "waiting for the race to start");
++            }
++            if (Carma_TestIsRacing()) {
++                TestLog(now, "race running");
++            } else if (now < gTest.wait_until) {
++                return;
++            } else {
++                TestLog(now, "line %d: no race after waiting, carrying on", l->line_number);
++            }
++            gTest.waiting_racing = 0;
++            gTest.pc++;
++            continue;
++        }
++
++        gTest.pc++;
++        if (strcmp(l->command, "wait") == 0) {
++            gTest.next_time = now + (unsigned)(l->number > 0 ? l->number : 0);
++        } else if (strcmp(l->command, "press") == 0) {
++            int times = l->number2 > 0 ? l->number2 : 1;
++            TestLog(now, "press %s%s", key, times > 1 ? " (repeated)" : "");
++            HoldKey(key, now + 80);
++            gTest.next_time = now + 200;
++            if (times > 1) {
++                // Run the same line again for the remaining presses
++                l->number2 = times - 1;
++                gTest.pc--;
++            }
++        } else if (strcmp(l->command, "hold") == 0) {
++            int ms = l->number2 > 0 ? l->number2 : 500;
++            TestLog(now, "hold %s for %d ms", key, ms);
++            HoldKey(key, now + ms);
++            gTest.next_time = now + ms + 50;
++        } else if (strcmp(l->command, "down") == 0) {
++            TestLog(now, "down %s", key);
++            SetKey(key, 1);
++        } else if (strcmp(l->command, "up") == 0) {
++            TestLog(now, "up %s", key);
++            SetKey(key, 0);
++        } else if (strcmp(l->command, "screenshot") == 0) {
++            snprintf(gTest.screenshot, sizeof(gTest.screenshot), "%s/%s.png", harness_game_config.test_output, key[0] ? key : "shot");
++        } else if (strcmp(l->command, "state") == 0) {
++            TestLog(now, "state");
++            Carma_TestDumpState();
++        } else if (strcmp(l->command, "blast_prop") == 0) {
++            TestLog(now, "blast_prop");
++            Carma_TestBlastProp();
++        } else if (strcmp(l->command, "blast_car") == 0) {
++            TestLog(now, "blast_car");
++            Carma_TestBlastCar();
++        } else if (strcmp(l->command, "ignite_car") == 0) {
++            TestLog(now, "ignite_car");
++            Carma_TestIgniteCar();
++        } else if (strcmp(l->command, "goto_water") == 0) {
++            TestLog(now, "goto_water");
++            Carma_TestGotoWater();
++        } else if (strcmp(l->command, "dive_water") == 0) {
++            TestLog(now, "dive_water");
++            Carma_TestDiveWater();
++        } else if (strcmp(l->command, "log") == 0) {
++            TestLog(now, "%s", l->text);
++        } else if (strcmp(l->command, "quit") == 0) {
++            TestLog(now, "quit");
++            exit(0);
++        } else {
++            TestLog(now, "line %d: unknown command '%s'", l->line_number, l->command);
++        }
++    }
++    if (gTest.pc >= gTest.count && gTest.screenshot[0] == '\0' && now >= gTest.next_time) {
++        TestLog(now, "script finished, %d screenshots", gTest.screenshots_taken);
++        exit(0);
++    }
++}
++
++const char* TestMode_ScreenshotPath(void) {
++    return gTest.screenshot[0] ? gTest.screenshot : NULL;
++}
++
++static unsigned Crc32(unsigned crc, const unsigned char* p, size_t n) {
++    static unsigned table[256];
++    unsigned c;
++    int k, j;
++
++    if (table[1] == 0) {
++        for (k = 0; k < 256; k++) {
++            c = k;
++            for (j = 0; j < 8; j++) {
++                c = (c & 1) ? 0xEDB88320u ^ (c >> 1) : c >> 1;
++            }
++            table[k] = c;
++        }
++    }
++    crc ^= 0xFFFFFFFFu;
++    while (n--) {
++        crc = table[(crc ^ *p++) & 0xFF] ^ (crc >> 8);
++    }
++    return crc ^ 0xFFFFFFFFu;
++}
++
++static void WriteChunk(FILE* f, const char* type, const unsigned char* data, size_t n) {
++    unsigned char be[4];
++    unsigned crc;
++
++    be[0] = n >> 24;
++    be[1] = n >> 16;
++    be[2] = n >> 8;
++    be[3] = n;
++    fwrite(be, 1, 4, f);
++    fwrite(type, 1, 4, f);
++    fwrite(data, 1, n, f);
++    crc = Crc32(Crc32(0, (const unsigned char*)type, 4), data, n);
++    be[0] = crc >> 24;
++    be[1] = crc >> 16;
++    be[2] = crc >> 8;
++    be[3] = crc;
++    fwrite(be, 1, 4, f);
++}
++
++// Uncompressed PNG (stored deflate blocks); pixels are RGBA, bottom row first as OpenGL reads them
++void TestMode_SaveScreenshot(int width, int height, const unsigned char* rgba) {
++    static const unsigned char signature[8] = { 137, 'P', 'N', 'G', 13, 10, 26, 10 };
++    unsigned char header[13];
++    unsigned char* raw;
++    unsigned char* z;
++    size_t raw_size, z_size, pos, n;
++    unsigned a = 1, b = 0;
++    int x, y;
++    FILE* f;
++
++    raw_size = (size_t)height * (1 + width * 3);
++    raw = malloc(raw_size);
++    for (y = 0; y < height; y++) {
++        unsigned char* row = raw + (size_t)y * (1 + width * 3);
++        const unsigned char* src = rgba + (size_t)(height - 1 - y) * width * 4;
++        row[0] = 0;
++        for (x = 0; x < width; x++) {
++            row[1 + x * 3] = src[x * 4];
++            row[2 + x * 3] = src[x * 4 + 1];
++            row[3 + x * 3] = src[x * 4 + 2];
++        }
++    }
++    z = malloc(raw_size + raw_size / 65535 * 5 + 64);
++    z_size = 0;
++    z[z_size++] = 0x78;
++    z[z_size++] = 0x01;
++    for (pos = 0; pos < raw_size; pos += n) {
++        n = raw_size - pos > 65535 ? 65535 : raw_size - pos;
++        z[z_size++] = pos + n == raw_size;
++        z[z_size++] = n & 0xFF;
++        z[z_size++] = n >> 8;
++        z[z_size++] = ~n & 0xFF;
++        z[z_size++] = (~n >> 8) & 0xFF;
++        memcpy(z + z_size, raw + pos, n);
++        z_size += n;
++    }
++    for (pos = 0; pos < raw_size; pos++) {
++        a = (a + raw[pos]) % 65521;
++        b = (b + a) % 65521;
++    }
++    z[z_size++] = b >> 8;
++    z[z_size++] = b;
++    z[z_size++] = a >> 8;
++    z[z_size++] = a;
++
++    f = fopen(gTest.screenshot, "wb");
++    if (f != NULL) {
++        header[0] = width >> 24;
++        header[1] = width >> 16;
++        header[2] = width >> 8;
++        header[3] = width;
++        header[4] = height >> 24;
++        header[5] = height >> 16;
++        header[6] = height >> 8;
++        header[7] = height;
++        header[8] = 8;  // bit depth
++        header[9] = 2;  // RGB
++        header[10] = 0; // deflate
++        header[11] = 0; // standard filters
++        header[12] = 0; // not interlaced
++        fwrite(signature, 1, 8, f);
++        WriteChunk(f, "IHDR", header, 13);
++        WriteChunk(f, "IDAT", z, z_size);
++        WriteChunk(f, "IEND", NULL, 0);
++        fclose(f);
++        gTest.screenshots_taken++;
++        printf("[test] screenshot %s (%dx%d)\n", gTest.screenshot, width, height);
++        fflush(stdout);
++    }
++    free(raw);
++    free(z);
++    gTest.screenshot[0] = '\0';
++}
++
++#endif
+diff --git a/src/harness/testmode.h b/src/harness/testmode.h
+new file mode 100644
+index 0000000..9fbee16
+--- /dev/null
++++ b/src/harness/testmode.h
+@@ -0,0 +1,27 @@
++#ifndef HARNESS_TESTMODE_H
++#define HARNESS_TESTMODE_H
++
++// Scripted test mode, see testmode.c. Without CARMA_DEV (cmake -DCARMA_DEV=ON) these do nothing.
++
++// Presses or releases a key by SDL name; returns 0 if the name is unknown
++typedef int tTest_set_key_cb(const char* pKey_name, int pDown);
++
++#ifdef CARMA_DEV
++int TestMode_Init(void);
++
++int TestMode_Active(void);
++
++void TestMode_Tick(unsigned pNow, tTest_set_key_cb* pSet_key);
++
++const char* TestMode_ScreenshotPath(void);
++
++void TestMode_SaveScreenshot(int pWidth, int pHeight, const unsigned char* pRgba);
++#else
++static inline int TestMode_Init(void) { return 0; }
++static inline int TestMode_Active(void) { return 0; }
++static inline void TestMode_Tick(unsigned pNow, tTest_set_key_cb* pSet_key) { (void)pNow; (void)pSet_key; }
++static inline const char* TestMode_ScreenshotPath(void) { return NULL; }
++static inline void TestMode_SaveScreenshot(int pWidth, int pHeight, const unsigned char* pRgba) { (void)pWidth; (void)pHeight; (void)pRgba; }
++#endif
++
++#endif

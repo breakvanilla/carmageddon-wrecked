@@ -1,0 +1,38 @@
+# Minigun: deploy, drive with it out, stow
+wait 4000
+press Return          # main menu: New game
+wait 2000
+press Return          # select driver
+wait 1500
+press Return          # accept name
+wait 3000
+press Return          # through the race set-up screens, ending on START RACE
+wait 3000
+press Return
+wait 3000
+press Return
+wait 3000
+press Return
+wait_racing 30000
+wait 1500
+state
+screenshot 01_stowed
+press G
+wait 250
+screenshot 02_doors_opening
+wait 500
+screenshot 03_rising
+wait 500
+screenshot 04_unfolding
+wait 1200
+screenshot 05_ready
+state
+hold Up 4000          # drive forward with the gun out
+screenshot 06_driving
+state
+press G
+wait 700
+screenshot 07_stowing
+wait 1800
+screenshot 08_stowed_again
+state

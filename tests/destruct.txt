@@ -1,0 +1,40 @@
+# Bullet impacts, shooting street furniture and crash debris on Maim Street
+wait 4000
+press Return          # New game
+wait 2000
+press Return          # select driver
+wait 1500
+press Return          # accept name
+wait 3000
+press Return          # race set-up screens, ending on START RACE
+wait 3000
+press Return
+wait 3000
+press Return
+wait 3000
+press Return
+wait_racing 30000
+press G               # deploy the minigun
+wait 2500
+hold Up 2500
+screenshot 01_shooting
+state
+hold Up 2000
+screenshot 02_shooting
+down Up               # full speed, then steer into the wall on the right
+wait 2500
+down Right
+wait 900
+screenshot 03_crash
+wait 150
+screenshot 04_crash_after
+wait 150
+screenshot 04b_crash_after
+up Right
+up Up
+wait 600
+screenshot 05_debris
+state
+hold Down 1500        # back off and look at the damage
+screenshot 06_wall
+state

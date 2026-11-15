@@ -1,0 +1,31 @@
+# Shattering on Maim Street: street furniture blown to pieces, then a rocket blows a hole in a wall
+wait 4000
+press Return          # New game
+wait 2000
+press Return          # select driver
+wait 1500
+press Return          # accept name
+wait 3000
+press Return          # race set-up screens, ending on START RACE
+wait 3000
+press Return
+wait 3000
+press Return
+wait 3000
+press Return
+wait_racing 30000
+blast_prop            # the wall lamp ahead on the right
+wait 250
+screenshot 01_prop
+wait 4500
+down Left             # turn to the wall on the left and fire into it
+hold Up 1100
+up Left
+hold Space 1000
+wait 800
+press F
+wait 250
+screenshot 02_wall_blast
+wait 3000
+screenshot 03_hole
+state

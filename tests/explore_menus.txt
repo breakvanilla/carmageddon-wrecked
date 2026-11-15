@@ -1,0 +1,24 @@
+# Goes from start-up to a race, with a screenshot of each screen on the way
+wait 4000
+press Return          # New game
+wait 2000
+press Return          # pick driver, name entry
+wait 1500
+press Return          # accept name
+wait 3000
+screenshot 06_after_name
+press Return
+wait 3000
+screenshot 07
+press Return
+wait 3000
+screenshot 08
+press Return
+wait 3000
+screenshot 09
+press Return
+wait 4000
+screenshot 10
+wait 6000
+screenshot 11
+state

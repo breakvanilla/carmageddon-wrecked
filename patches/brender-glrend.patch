@@ -1,0 +1,2812 @@
+diff --git a/core/inc/device_p.h b/core/inc/device_p.h
+index b8231fe..fe5b34b 100644
+--- a/core/inc/device_p.h
++++ b/core/inc/device_p.h
+@@ -31,4 +31,51 @@ typedef struct br_device_gl_callback_procs {
+     br_device_gl_free_cbfn                *free;
+ } br_device_gl_callback_procs;
+ 
++/* Wrecked Carmageddon: reflections and dynamic lights */
++#define GLREND_MAX_LIGHTS 16
++
++typedef struct glrend_light {
++    br_vector3 position;  /* world space */
++    br_vector3 direction; /* world space, normalised, spot lights only */
++    br_vector3 colour;    /* RGB times intensity */
++    float radius;         /* no light beyond this distance */
++    float spot_outer_cos; /* cosine of the cone edge; 0 for a point light */
++    float spot_inner_cos; /* cosine of the fully lit centre of the cone */
++} glrend_light;
++
++void BR_PUBLIC_ENTRY GLREND_SetCamera(br_matrix34* camera_to_world);
++void BR_PUBLIC_ENTRY GLREND_SetReflection(float amount);
++void BR_PUBLIC_ENTRY GLREND_SetReflectionEnvironment(br_pixelmap* sky, float sky_width, float sky_height, float sky_underground);
++void BR_PUBLIC_ENTRY GLREND_SetLights(const glrend_light* lights, int count);
++/* Curved-surface subdivision for what is drawn next; 0 draws flat triangles */
++void BR_PUBLIC_ENTRY GLREND_SetTessellation(int level);
++
++/* Wrecked Carmageddon: folders of hi-res replacement textures, <identifier>.png. Set starts the list again, Add appends;
++ * the first folder that has a texture wins. */
++void BR_PUBLIC_ENTRY GLREND_SetTextureDirectory(const char* path);
++void BR_PUBLIC_ENTRY GLREND_AddTextureDirectory(const char* path);
++
++/* Wrecked Carmageddon: widescreen. While on, 3D scenes fill the window width, not the 4:3 area of the 2D layer (the
++   camera's aspect has to match). */
++void BR_PUBLIC_ENTRY GLREND_SetWideScene(int on);
++/* Includes the area outside 4:3 */
++void BR_PUBLIC_ENTRY GLREND_ClearWindow(br_colour colour);
++
++/* Wrecked Carmageddon: sun shadows. The shadow map is square, pExtent world units either side of pCentre, for light
++   travelling along pLight_dir (world space). Casters must be drawn before receivers. */
++void BR_PUBLIC_ENTRY GLREND_ShadowBegin(const br_vector3* pLight_dir, const br_vector3* pCentre, float pExtent);
++void BR_PUBLIC_ENTRY GLREND_ShadowCasting(int on);
++void BR_PUBLIC_ENTRY GLREND_ShadowReceiving(int on);
++void BR_PUBLIC_ENTRY GLREND_ShadowEnd(void);
++
++/* Wrecked Carmageddon: water (drivers/glrend/water.c). Water materials are drawn last, by GLREND_DrawWater().
++   SetWaterScene: time in seconds, direction to the sun (world), ripples as world x, z, start time, strength (up to 32),
++   camera under water, surface height, colour seen from below. */
++struct br_material;
++void BR_PUBLIC_ENTRY GLREND_SetWaterMaterial(struct br_material* pMaterial);
++void BR_PUBLIC_ENTRY GLREND_ClearWaterMaterials(void);
++void BR_PUBLIC_ENTRY GLREND_SetWaterScene(float pTime, const br_vector3* pTo_sun, const float* pRipples, int pRipple_count, int pCamera_under, float pSurface, const br_vector3* pTint);
++void BR_PUBLIC_ENTRY GLREND_DrawWater(void);
++void BR_PUBLIC_ENTRY GLREND_DrawUnderwater(void);
++
+ #endif
+diff --git a/drivers/glrend/CMakeLists.txt b/drivers/glrend/CMakeLists.txt
+index b31f10e..162d70f 100644
+--- a/drivers/glrend/CMakeLists.txt
++++ b/drivers/glrend/CMakeLists.txt
+@@ -21,6 +21,38 @@ add_custom_command(
+         COMMAND "${CMAKE_COMMAND}" "-DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}" "-DFILE=brender.frag.glsl" -P "${BRender_SOURCE_DIR}/cmake/EmbedResource.cmake"
+         DEPENDS brender.frag.glsl
+ )
++# Wrecked Carmageddon: curved-surface shaders
++add_custom_command(
++        OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/brender_tess.vert.glsl.h"
++        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}" "-DFILE=brender_tess.vert.glsl" -P "${BRender_SOURCE_DIR}/cmake/EmbedResource.cmake"
++        DEPENDS brender_tess.vert.glsl
++)
++add_custom_command(
++        OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/brender_tess.tesc.glsl.h"
++        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}" "-DFILE=brender_tess.tesc.glsl" -P "${BRender_SOURCE_DIR}/cmake/EmbedResource.cmake"
++        DEPENDS brender_tess.tesc.glsl
++)
++# Wrecked Carmageddon: water
++add_custom_command(
++        OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/water.vert.glsl.h"
++        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}" "-DFILE=water.vert.glsl" -P "${BRender_SOURCE_DIR}/cmake/EmbedResource.cmake"
++        DEPENDS water.vert.glsl
++)
++add_custom_command(
++        OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/water.frag.glsl.h"
++        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}" "-DFILE=water.frag.glsl" -P "${BRender_SOURCE_DIR}/cmake/EmbedResource.cmake"
++        DEPENDS water.frag.glsl
++)
++add_custom_command(
++        OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/underwater.frag.glsl.h"
++        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}" "-DFILE=underwater.frag.glsl" -P "${BRender_SOURCE_DIR}/cmake/EmbedResource.cmake"
++        DEPENDS underwater.frag.glsl
++)
++add_custom_command(
++        OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/brender_tess.tese.glsl.h"
++        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}" "-DFILE=brender_tess.tese.glsl" -P "${BRender_SOURCE_DIR}/cmake/EmbedResource.cmake"
++        DEPENDS brender_tess.tese.glsl
++)
+ 
+ 
+ set(GLSTATE_FILES
+@@ -62,6 +94,7 @@ set(RENDERER_FILES
+         onscreen.c
+ 
+         renderer.c
++        water.c
+         renderer.h
+ 
+         sbuffer.h
+@@ -144,6 +177,12 @@ add_library(glrend
+         "${CMAKE_CURRENT_BINARY_DIR}/default.frag.glsl.h"
+         "${CMAKE_CURRENT_BINARY_DIR}/brender.vert.glsl.h"
+         "${CMAKE_CURRENT_BINARY_DIR}/brender.frag.glsl.h"
++        "${CMAKE_CURRENT_BINARY_DIR}/brender_tess.vert.glsl.h"
++        "${CMAKE_CURRENT_BINARY_DIR}/brender_tess.tesc.glsl.h"
++        "${CMAKE_CURRENT_BINARY_DIR}/brender_tess.tese.glsl.h"
++        "${CMAKE_CURRENT_BINARY_DIR}/water.vert.glsl.h"
++        "${CMAKE_CURRENT_BINARY_DIR}/water.frag.glsl.h"
++        "${CMAKE_CURRENT_BINARY_DIR}/underwater.frag.glsl.h"
+         )
+ 
+ get_target_property(target_type glrend TYPE)
+diff --git a/drivers/glrend/brender.frag.glsl b/drivers/glrend/brender.frag.glsl
+index ef82e93..c30a1cc 100644
+--- a/drivers/glrend/brender.frag.glsl
++++ b/drivers/glrend/brender.frag.glsl
+@@ -73,6 +73,14 @@ layout(std140) uniform br_model_state
+     float fog_max;
+     float alpha;
+     uint prelit;
++    mat4 view_to_world;
++    float reflectivity;
++    float sky_width;
++    float sky_height;
++    float sky_underground;
++    uint has_sky;
++    uint texture_alpha; /* Wrecked Carmageddon: soft alpha edges */
++    uint shadow_receive; /* Wrecked Carmageddon */
+ };
+ 
+ in vec4 position;
+@@ -88,6 +96,21 @@ in vec3 v_frag_pos;
+ out vec4 fragColour;
+ 
+ uniform sampler2D main_texture;
++uniform sampler2D env_texture;
++
++/* Wrecked Carmageddon: dynamic lights, view space */
++#define MAX_DYNAMIC_LIGHTS 16
++/* Wrecked Carmageddon: sun shadows */
++uniform sampler2D shadow_map;
++uniform int shadow_on;
++uniform mat4 shadow_vp;     /* world to the shadow map */
++uniform vec3 shadow_light;  /* view space */
++uniform float shadow_texel; /* in texture coordinates */
++
++uniform int dl_count;
++uniform vec4 dl_position[MAX_DYNAMIC_LIGHTS];  /* xyz, w = radius */
++uniform vec4 dl_colour[MAX_DYNAMIC_LIGHTS];    /* rgb, w = cosine of the spot cone edge, 0 for point lights */
++uniform vec4 dl_direction[MAX_DYNAMIC_LIGHTS]; /* xyz, w = cosine of the fully lit spot centre */
+ 
+ vec3 adjustBrightness(in vec3 colour, in float brightness)
+ {
+@@ -197,6 +220,92 @@ void doDistanceFog() {
+     }
+ }
+ 
++/* Wrecked Carmageddon: car paint reflects the track's sky texture, mapped as the game draws the sky, darker below the
++ * horizon. */
++vec3 environmentColour(vec3 r) {
++    vec3 sky;
++    float elevation = asin(clamp(r.y, -1.0, 1.0));
++
++    if (has_sky != 0u) {
++        float height = float(textureSize(env_texture, 0).y);
++        float u = atan(r.x, -r.z) / sky_width;
++        float v = 1.0 - (elevation + sky_underground) / sky_height;
++        sky = textureLod(env_texture, vec2(u, clamp(v, 0.5 / height, 1.0 - 0.5 / height)), 0.0).rgb;
++    } else {
++        sky = mix(vec3(0.55, 0.6, 0.65), vec3(0.3, 0.45, 0.7), clamp(r.y, 0.0, 1.0));
++    }
++    return sky * mix(0.3, 1.0, smoothstep(-0.25, 0.05, r.y));
++}
++
++void applyReflection(vec3 base) {
++    vec3 n = normalize(normal.xyz);
++    vec3 i = normalize(position.xyz);
++    if (dot(n, i) > 0.0) {
++        n = -n;
++    }
++    vec3 rw = normalize(mat3(view_to_world) * reflect(i, n));
++    float fresnel = 0.04 + 0.96 * pow(1.0 - clamp(dot(-i, n), 0.0, 1.0), 5.0);
++    // Dark parts (tyres, grilles, shadows in the paint) stay matte
++    float paint = smoothstep(0.06, 0.3, dot(base, vec3(0.299, 0.587, 0.114)));
++    float k = reflectivity * paint * (0.3 + 0.7 * fresnel);
++    fragColour.rgb = mix(fragColour.rgb, environmentColour(rw), k);
++
++    // Sun glint
++    vec3 sun = normalize(vec3(0.35, 0.8, 0.45));
++    fragColour.rgb += vec3(1.0, 0.95, 0.85) * pow(max(dot(rw, sun), 0.0), 80.0) * reflectivity * paint;
++}
++
++/* 0 to 1 */
++float sunShadow() {
++    vec4 world = view_to_world * position;
++    vec4 clip = shadow_vp * world;
++    vec3 p = clip.xyz / clip.w * 0.5 + 0.5;
++    if (p.x <= 0.0 || p.x >= 1.0 || p.y <= 0.0 || p.y >= 1.0 || p.z >= 1.0) {
++        return 0.0;
++    }
++    float blocked = 0.0;
++    for (int dy = -1; dy <= 1; dy++) {
++        for (int dx = -1; dx <= 1; dx++) {
++            float d = texture(shadow_map, p.xy + vec2(dx, dy) * shadow_texel).r;
++            blocked += d < p.z - 0.0008 ? 1.0 : 0.0;
++        }
++    }
++    blocked /= 9.0;
++    /* Fades out at the map edge and on surfaces turned away from the sun (already in shade) */
++    vec2 edge = abs(p.xy - 0.5) * 2.0;
++    blocked *= 1.0 - smoothstep(0.8, 1.0, max(edge.x, edge.y));
++    vec3 n = normalize(normal.xyz);
++    blocked *= smoothstep(0.0, 0.35, abs(dot(n, -shadow_light)));
++    return blocked;
++}
++
++/* Surfaces are prelit, so this is added on top. Wraps around a little as old models have rough normals. */
++vec3 dynamicLight(vec3 p) {
++    vec3 n = normalize(normal.xyz);
++    if (dot(n, p) > 0.0) {
++        n = -n;
++    }
++    vec3 sum = vec3(0.0);
++    for (int k = 0; k < dl_count; k++) {
++        vec3 d = dl_position[k].xyz - p;
++        float dist = length(d);
++        float radius = dl_position[k].w;
++        if (dist >= radius) {
++            continue;
++        }
++        vec3 l = d / max(dist, 1e-4);
++        float falloff = 1.0 - (dist * dist) / (radius * radius);
++        falloff *= falloff;
++        float lambert = clamp(dot(n, l) * 0.75 + 0.25, 0.0, 1.0);
++        float spot = 1.0;
++        if (dl_colour[k].w > 0.0) {
++            spot = smoothstep(dl_colour[k].w, dl_direction[k].w, dot(-l, dl_direction[k].xyz));
++        }
++        sum += dl_colour[k].rgb * (falloff * lambert * spot);
++    }
++    return sum;
++}
++
+ void main() {
+     vec4 textureColour;
+ 
+@@ -208,8 +317,13 @@ void main() {
+         textureColour = surface_colour;
+     } else {
+         textureColour = texture(main_texture, mappedUV);
+-        // full black pixel is transparent
+-        if(!disable_colour_key && textureColour.rgb == vec3(0)) {
++        if (texture_alpha != 0u) {
++            // Wrecked Carmageddon: soft alpha edges
++            if (textureColour.a < 0.01) {
++                discard;
++            }
++        } else if(!disable_colour_key && textureColour.rgb == vec3(0)) {
++            // full black pixel is transparent
+             discard;
+         }
+     }
+@@ -238,12 +352,25 @@ void main() {
+ #endif
+ 
+     // Apply alpha transparency
+-    fragColour.a = alpha;
++    fragColour.a = texture_alpha != 0u && !disable_texture ? alpha * textureColour.a : alpha;
+ 
+     // Apply lighting
+     if (lighting == 1u && prelit == 0u) {
+         fragColour.rgb *= vec3(ka, ka, ka);
+     }
+ 
++    if (reflectivity > 0.0) {
++        applyReflection(textureColour.rgb);
++    }
++
++    if (shadow_on != 0 && shadow_receive != 0u) {
++        fragColour.rgb *= 1.0 - 0.6 * sunShadow();
++    }
++
++    // See-through things (smoke, fire) give off light rather than take it
++    if (dl_count > 0 && alpha > 0.999 && texture_alpha == 0u) {
++        fragColour.rgb += textureColour.rgb * dynamicLight(position.xyz);
++    }
++
+     doDistanceFog();
+ }
+diff --git a/drivers/glrend/brender.vert.glsl b/drivers/glrend/brender.vert.glsl
+index 01ec63b..f4d5f66 100644
+--- a/drivers/glrend/brender.vert.glsl
++++ b/drivers/glrend/brender.vert.glsl
+@@ -73,6 +73,14 @@ layout(std140) uniform br_model_state
+     float fog_max;
+     float alpha;
+     uint prelit;
++    mat4 view_to_world;
++    float reflectivity;
++    float sky_width;
++    float sky_height;
++    float sky_underground;
++    uint has_sky;
++    uint texture_alpha; /* Wrecked Carmageddon: soft alpha edges */
++    uint shadow_receive; /* Wrecked Carmageddon */
+ };
+ 
+ in vec3 aPosition;
+diff --git a/drivers/glrend/brender_tess.tesc.glsl b/drivers/glrend/brender_tess.tesc.glsl
+new file mode 100644
+index 0000000..286d14e
+--- /dev/null
++++ b/drivers/glrend/brender_tess.tesc.glsl
+@@ -0,0 +1,36 @@
++#version 410 core
++
++/* Curved-surface program: passes the triangle through and sets its subdivision */
++layout(vertices = 3) out;
++
++in vec3 vPos[];
++in vec3 vNormal[];
++in vec2 vUV[];
++in vec4 vColour[];
++in vec4 vSmooth[];
++in vec4 vCrease[];
++
++out vec3 tPos[];
++out vec3 tNormal[];
++out vec2 tUV[];
++out vec4 tColour[];
++out vec4 tSmooth[];
++out vec4 tCrease[];
++
++uniform float tess_level;
++
++void main()
++{
++    tPos[gl_InvocationID] = vPos[gl_InvocationID];
++    tNormal[gl_InvocationID] = vNormal[gl_InvocationID];
++    tUV[gl_InvocationID] = vUV[gl_InvocationID];
++    tColour[gl_InvocationID] = vColour[gl_InvocationID];
++    tSmooth[gl_InvocationID] = vSmooth[gl_InvocationID];
++    tCrease[gl_InvocationID] = vCrease[gl_InvocationID];
++    if (gl_InvocationID == 0) {
++        gl_TessLevelOuter[0] = tess_level;
++        gl_TessLevelOuter[1] = tess_level;
++        gl_TessLevelOuter[2] = tess_level;
++        gl_TessLevelInner[0] = tess_level;
++    }
++}
+diff --git a/drivers/glrend/brender_tess.tese.glsl b/drivers/glrend/brender_tess.tese.glsl
+new file mode 100644
+index 0000000..cefe986
+--- /dev/null
++++ b/drivers/glrend/brender_tess.tese.glsl
+@@ -0,0 +1,139 @@
++#version 410 core
++
++#define MAX_LIGHTS                      48 /* Must match up with BRender */
++#define MAX_CLIP_PLANES                 6
++
++struct br_light
++{
++    vec4 position;    /* (X, Y, Z, 1) */
++    vec4 direction;   /* (X, Y, Z, 0), normalised */
++    vec4 half_;       /* (X, Y, Z, 0), normalised */
++    vec4 colour;      /* (R, G, B, 0), normalised */
++    vec4 iclq;        /* (intensity, constant, linear, attenutation) */
++    vec2 spot_angles; /* (inner, outer), if (0.0, 0.0), then this is a point light. */
++};
++
++layout(std140) uniform br_scene_state
++{
++    vec4 eye_view; /* Eye position in view-space */
++    br_light lights[MAX_LIGHTS];
++    uint num_lights;
++
++    vec4 clip_planes[MAX_CLIP_PLANES];
++    uint num_clip_planes;
++
++    float hither_z;
++    float yon_z;
++};
++
++layout(std140) uniform br_model_state
++{
++    mat4 model_view;
++    mat4 projection;
++    mat4 projection_brender;
++    mat4 mvp;
++    mat4 normal_matrix;
++    mat4 environment;
++    mat4 map_transform;
++    vec4 surface_colour;
++    vec4 clear_colour;
++    vec4 eye_m; /* Eye position in model-space */
++
++    float ka; /* Ambient mod */
++    float ks; /* Specular mod (unused) */
++    float kd; /* Diffuse mod */
++    float power;
++    uint lighting; /* Is this surface lit? */
++    int uv_source;
++    bool disable_colour_key;
++    bool disable_texture;
++    bool fog_enabled;
++    vec3 fog_colour;
++    float fog_min;
++    float fog_max;
++    float alpha;
++    uint prelit;
++    mat4 view_to_world;
++    float reflectivity;
++    float sky_width;
++    float sky_height;
++    float sky_underground;
++    uint has_sky;
++    uint texture_alpha; /* soft alpha edges */
++    uint shadow_receive;
++};
++
++/*
++ * Curved PN triangles (Vlachos et al., 2001). To stay crack-free at hard edges, an edge's control points depend only
++ * on its two vertices: smooth bends to the averaged normal's tangent plane; crease follows the crease line along it,
++ * else its face cluster's tangent plane; corner stays straight. Outputs match brender.frag.glsl.
++ */
++layout(triangles, equal_spacing, ccw) in;
++
++in vec3 tPos[];
++in vec3 tNormal[];
++in vec2 tUV[];
++in vec4 tColour[];
++in vec4 tSmooth[];
++in vec4 tCrease[];
++
++out vec4 position;
++out vec4 normal;
++out vec2 uv;
++out vec4 colour;
++out vec3 rawPosition;
++out vec3 rawNormal;
++out vec3 v_frag_pos;
++
++vec3 edgeControl(vec3 a, vec3 b, vec4 smoothA, vec4 creaseA)
++{
++    vec3 d = b - a;
++    if (smoothA.w > 1.5) {
++        return a + d / 3.0;
++    }
++    if (smoothA.w > 0.5 && abs(dot(normalize(d), creaseA.xyz)) > 0.8) {
++        return a + creaseA.xyz * (dot(d, creaseA.xyz) / 3.0);
++    }
++    vec3 n = smoothA.xyz;
++    return (2.0 * a + b - dot(d, n) * n) / 3.0;
++}
++
++void main()
++{
++    float u = gl_TessCoord.x;
++    float v = gl_TessCoord.y;
++    float w = gl_TessCoord.z;
++    vec3 p0 = tPos[0];
++    vec3 p1 = tPos[1];
++    vec3 p2 = tPos[2];
++
++    vec3 b210 = edgeControl(p0, p1, tSmooth[0], tCrease[0]);
++    vec3 b120 = edgeControl(p1, p0, tSmooth[1], tCrease[1]);
++    vec3 b021 = edgeControl(p1, p2, tSmooth[1], tCrease[1]);
++    vec3 b012 = edgeControl(p2, p1, tSmooth[2], tCrease[2]);
++    vec3 b102 = edgeControl(p2, p0, tSmooth[2], tCrease[2]);
++    vec3 b201 = edgeControl(p0, p2, tSmooth[0], tCrease[0]);
++    vec3 e = (b210 + b120 + b021 + b012 + b102 + b201) / 6.0;
++    vec3 b111 = e + (e - (p0 + p1 + p2) / 3.0) / 2.0;
++
++    vec3 p = p0 * u * u * u + p1 * v * v * v + p2 * w * w * w
++        + b210 * 3.0 * u * u * v + b120 * 3.0 * u * v * v
++        + b201 * 3.0 * u * u * w + b021 * 3.0 * v * v * w
++        + b102 * 3.0 * u * w * w + b012 * 3.0 * v * w * w
++        + b111 * 6.0 * u * v * w;
++
++    /* Smoothed normals, so curved panels also shade smoothly */
++    vec3 n = normalize(u * tSmooth[0].xyz + v * tSmooth[1].xyz + w * tSmooth[2].xyz);
++    if (any(isnan(n))) {
++        n = normalize(u * tNormal[0] + v * tNormal[1] + w * tNormal[2]);
++    }
++
++    uv = u * tUV[0] + v * tUV[1] + w * tUV[2];
++    colour = u * tColour[0] + v * tColour[1] + w * tColour[2];
++    rawPosition = p;
++    rawNormal = n;
++    position = model_view * vec4(p, 1.0);
++    normal = vec4(normalize(mat3(normal_matrix) * n), 0.0);
++    v_frag_pos = vec3((projection_brender * model_view) * vec4(p, 1.0));
++    gl_Position = projection * position;
++}
+diff --git a/drivers/glrend/brender_tess.vert.glsl b/drivers/glrend/brender_tess.vert.glsl
+new file mode 100644
+index 0000000..355f88f
+--- /dev/null
++++ b/drivers/glrend/brender_tess.vert.glsl
+@@ -0,0 +1,97 @@
++#version 410 core
++
++#define MAX_LIGHTS                      48 /* Must match up with BRender */
++#define MAX_CLIP_PLANES                 6
++
++struct br_light
++{
++    vec4 position;    /* (X, Y, Z, 1) */
++    vec4 direction;   /* (X, Y, Z, 0), normalised */
++    vec4 half_;       /* (X, Y, Z, 0), normalised */
++    vec4 colour;      /* (R, G, B, 0), normalised */
++    vec4 iclq;        /* (intensity, constant, linear, attenutation) */
++    vec2 spot_angles; /* (inner, outer), if (0.0, 0.0), then this is a point light. */
++};
++
++layout(std140) uniform br_scene_state
++{
++    vec4 eye_view; /* Eye position in view-space */
++    br_light lights[MAX_LIGHTS];
++    uint num_lights;
++
++    vec4 clip_planes[MAX_CLIP_PLANES];
++    uint num_clip_planes;
++
++    float hither_z;
++    float yon_z;
++};
++
++layout(std140) uniform br_model_state
++{
++    mat4 model_view;
++    mat4 projection;
++    mat4 projection_brender;
++    mat4 mvp;
++    mat4 normal_matrix;
++    mat4 environment;
++    mat4 map_transform;
++    vec4 surface_colour;
++    vec4 clear_colour;
++    vec4 eye_m; /* Eye position in model-space */
++
++    float ka; /* Ambient mod */
++    float ks; /* Specular mod (unused) */
++    float kd; /* Diffuse mod */
++    float power;
++    uint lighting; /* Is this surface lit? */
++    int uv_source;
++    bool disable_colour_key;
++    bool disable_texture;
++    bool fog_enabled;
++    vec3 fog_colour;
++    float fog_min;
++    float fog_max;
++    float alpha;
++    uint prelit;
++    mat4 view_to_world;
++    float reflectivity;
++    float sky_width;
++    float sky_height;
++    float sky_underground;
++    uint has_sky;
++    uint texture_alpha; /* soft alpha edges */
++    uint shadow_receive;
++};
++
++/* Curved-surface program (brender_tess.tese.glsl): passes the model-space vertex through */
++in vec3 aPosition;
++in vec2 aUV;
++in vec3 aNormal;
++in vec4 aColour;
++in vec4 aSmooth; /* xyz: cluster-averaged normal, w: 0 smooth, 1 crease, 2 corner */
++in vec4 aCrease; /* xyz: crease line direction */
++
++out vec3 vPos;
++out vec3 vNormal;
++out vec2 vUV;
++out vec4 vColour;
++out vec4 vSmooth;
++out vec4 vCrease;
++
++void main()
++{
++    vPos = aPosition;
++    vNormal = aNormal;
++    vUV = aUV;
++    vSmooth = aSmooth;
++    vCrease = aCrease;
++
++    /* Same colour as brender.vert, where scene lights are switched off */
++    vColour = surface_colour;
++    if (lighting == 1u) {
++        vColour = prelit == 1u ? vec4(aColour.rgb, 1.0) : surface_colour;
++        if (num_lights > 0u) {
++            vColour += vec4(clear_colour.rgb, 0.0);
++        }
++    }
++}
+diff --git a/drivers/glrend/default.frag.glsl b/drivers/glrend/default.frag.glsl
+index b4d9700..fc6b90b 100644
+--- a/drivers/glrend/default.frag.glsl
++++ b/drivers/glrend/default.frag.glsl
+@@ -15,12 +15,216 @@ in vec2 uv;
+ uniform sampler2D uSampler;
+ uniform float uFlipVertically;
+ uniform int uDiscardPurplePixels;
++uniform int uUpscale;
+ 
+ layout (location = 0) out vec4 mainColour;
+ 
++/*
++ * Wrecked Carmageddon: upscaling of the 640x480 2D layer. uUpscale: 1 sharp(), 2 xbr().
++ *
++ * xbr() is xBR level 2 by Hyllian (MIT licence). Purple is the colour key for the 3D scene, so near a key pixel the
++ * hard-edged variant is used and the key still matches exactly. Low-contrast areas (dithered shading) are blended
++ * smoothly instead, as xBR turns dithering into squiggles.
++ */
++
++const vec3 KEY = vec3(1.0, 0.0, 1.0);
++const vec3 Y_WEIGHT = 48.0 * vec3(0.299, 0.587, 0.114);
++const float EQ_THRESHOLD = 15.0;
++const float LV2_COEFFICIENT = 2.0;
++const float EDGE_THRESHOLD = 6.0;   // smaller luma steps than this (out of 48) are shading, not edges
++const float SMOOTH_THRESHOLD = 9.0; // blend smoothly where a 2x2 block varies less than this
++
++ivec2 texSize;
++ivec2 base;
++vec2 srcStep; // source pixels per output pixel
++
++vec3 fetch(int dx, int dy) {
++    return texelFetch(uSampler, clamp(base + ivec2(dx, dy), ivec2(0), texSize - 1), 0).rgb;
++}
++
++vec4 luma4(vec3 a, vec3 b, vec3 c, vec3 d) {
++    return vec4(dot(a, Y_WEIGHT), dot(b, Y_WEIGHT), dot(c, Y_WEIGHT), dot(d, Y_WEIGHT));
++}
++
++vec4 df(vec4 a, vec4 b) {
++    return abs(a - b);
++}
++
++// 0.0 / 1.0 per component
++vec4 eq(vec4 a, vec4 b) {
++    return vec4(lessThan(df(a, b), vec4(EQ_THRESHOLD)));
++}
++
++vec4 neq(vec4 a, vec4 b) {
++    return vec4(greaterThanEqual(df(a, b), vec4(EDGE_THRESHOLD)));
++}
++
++vec4 weighted_distance(vec4 a, vec4 b, vec4 c, vec4 d, vec4 e, vec4 f, vec4 g, vec4 h) {
++    return df(a, b) + df(a, c) + df(d, e) + df(d, f) + 4.0 * df(g, h);
++}
++
++float c_df(vec3 a, vec3 b) {
++    vec3 d = abs(a - b);
++    return d.r + d.g + d.b;
++}
++
++vec3 resolve(vec3 E, vec3 B, vec3 D, vec3 F, vec3 H, vec4 px, vec4 amount) {
++    vec3 res1 = mix(E, mix(H, F, px.x), amount.x);
++    res1 = mix(res1, mix(B, D, px.z), amount.z);
++    vec3 res2 = mix(E, mix(F, B, px.y), amount.y);
++    res2 = mix(res2, mix(D, H, px.w), amount.w);
++    return mix(res1, res2, step(c_df(E, res1), c_df(E, res2)));
++}
++
++// Bilinear blend of the 2x2 block around src, or E if the block has a key pixel or a clear edge in it
++vec3 smoothed(vec2 src, vec3 E) {
++    vec2 p = src - 0.5;
++    ivec2 b = ivec2(floor(p));
++    vec2 t = fract(p);
++    ivec2 hi = texSize - 1;
++    vec3 c00 = texelFetch(uSampler, clamp(b, ivec2(0), hi), 0).rgb;
++    vec3 c10 = texelFetch(uSampler, clamp(b + ivec2(1, 0), ivec2(0), hi), 0).rgb;
++    vec3 c01 = texelFetch(uSampler, clamp(b + ivec2(0, 1), ivec2(0), hi), 0).rgb;
++    vec3 c11 = texelFetch(uSampler, clamp(b + ivec2(1, 1), ivec2(0), hi), 0).rgb;
++    if (c00 == KEY || c10 == KEY || c01 == KEY || c11 == KEY) {
++        return E;
++    }
++    vec4 l = luma4(c00, c10, c01, c11);
++    float range = max(max(l.x, l.y), max(l.z, l.w)) - min(min(l.x, l.y), min(l.z, l.w));
++    if (range >= SMOOTH_THRESHOLD) {
++        return E;
++    }
++    return mix(mix(c00, c10, t.x), mix(c01, c11, t.x), t.y);
++}
++
++vec3 xbr(vec2 src) {
++    texSize = textureSize(uSampler, 0);
++    base = ivec2(floor(src));
++    vec2 fp = fract(src);
++
++    vec3 E = fetch(0, 0);
++    vec3 B = fetch(0, -1);
++    vec3 D = fetch(-1, 0);
++    vec3 F = fetch(1, 0);
++    vec3 H = fetch(0, 1);
++
++    // Fast path: most of the screen in a race is key
++    if (E == KEY && B == KEY && D == KEY && F == KEY && H == KEY) {
++        return KEY;
++    }
++
++    vec3 A = fetch(-1, -1);
++    vec3 C = fetch(1, -1);
++    vec3 G = fetch(-1, 1);
++    vec3 I = fetch(1, 1);
++    vec3 A1 = fetch(-1, -2);
++    vec3 B1 = fetch(0, -2);
++    vec3 C1 = fetch(1, -2);
++    vec3 A0 = fetch(-2, -1);
++    vec3 C4 = fetch(2, -1);
++    vec3 D0 = fetch(-2, 0);
++    vec3 F4 = fetch(2, 0);
++    vec3 G0 = fetch(-2, 1);
++    vec3 I4 = fetch(2, 1);
++    vec3 G5 = fetch(-1, 2);
++    vec3 H5 = fetch(0, 2);
++    vec3 I5 = fetch(1, 2);
++
++    // Each component is one corner of E: x = bottom right, y = top right, z = top left, w = bottom left
++    vec4 b = luma4(B, D, H, F);
++    vec4 c = luma4(C, A, G, I);
++    vec4 e = luma4(E, E, E, E);
++    vec4 d = b.yzwx;
++    vec4 f = b.wxyz;
++    vec4 g = c.zwxy;
++    vec4 h = b.zwxy;
++    vec4 i = c.wxyz;
++    vec4 i4 = luma4(I4, C1, A0, G5);
++    vec4 i5 = luma4(I5, C4, A1, G0);
++    vec4 h5 = luma4(H5, F4, B1, D0);
++    vec4 f4 = h5.yzwx;
++
++    const vec4 Ao = vec4(1.0, -1.0, -1.0, 1.0);
++    const vec4 Bo = vec4(1.0, 1.0, -1.0, -1.0);
++    const vec4 Co = vec4(1.5, 0.5, -0.5, 0.5);
++    const vec4 Ax = vec4(1.0, -1.0, -1.0, 1.0);
++    const vec4 Bx = vec4(0.5, 2.0, -0.5, -2.0);
++    const vec4 Cx = vec4(1.0, 1.0, -0.5, 0.0);
++    const vec4 Ay = vec4(1.0, -1.0, -1.0, 1.0);
++    const vec4 By = vec4(2.0, 0.5, -2.0, -0.5);
++    const vec4 Cy = vec4(2.0, 0.0, -1.0, 0.5);
++
++    // These lines split E: on the far side of a line E takes the neighbouring colour
++    vec4 fx = Ao * fp.y + Bo * fp.x;
++    vec4 fx_left = Ax * fp.y + Bx * fp.x;
++    vec4 fx_up = Ay * fp.y + By * fp.x;
++
++    vec4 interp_restriction_lv1 = neq(e, f) * neq(e, h)
++        * clamp((1.0 - eq(f, b)) * (1.0 - eq(h, d))
++                + eq(e, i) * (1.0 - eq(f, i4)) * (1.0 - eq(h, i5))
++                + eq(e, g) + eq(e, c),
++            0.0, 1.0);
++    vec4 interp_restriction_lv2_left = neq(e, g) * neq(d, g);
++    vec4 interp_restriction_lv2_up = neq(e, c) * neq(b, c);
++
++    vec4 edr = vec4(lessThan(weighted_distance(e, c, g, i, h5, f4, h, f), weighted_distance(h, d, i5, f, i4, b, e, i)))
++        * interp_restriction_lv1;
++    vec4 edr_left = vec4(lessThanEqual(LV2_COEFFICIENT * df(f, g), df(h, c))) * interp_restriction_lv2_left * edr;
++    vec4 edr_up = vec4(greaterThanEqual(df(f, g), LV2_COEFFICIENT * df(h, c))) * interp_restriction_lv2_up * edr;
++    vec4 px = vec4(lessThanEqual(df(e, f), df(e, h)));
++
++    if (E == KEY || B == KEY || D == KEY || F == KEY || H == KEY) {
++        vec4 hard = max(max(edr_left * step(Cx, fx_left), edr_up * step(Cy, fx_up)), edr * step(Co, fx));
++        return resolve(E, B, D, F, H, px, hard);
++    }
++
++    // Anti-alias each edge over about one output pixel; widths come from srcStep, as fp jumps at source pixel edges
++    vec4 w45 = max(abs(Ao) * srcStep.y + abs(Bo) * srcStep.x, vec4(1e-4));
++    vec4 w30 = max(abs(Ax) * srcStep.y + abs(Bx) * srcStep.x, vec4(1e-4));
++    vec4 w60 = max(abs(Ay) * srcStep.y + abs(By) * srcStep.x, vec4(1e-4));
++    vec4 fx45 = edr * smoothstep(Co - w45 / 2.0, Co + w45 / 2.0, fx);
++    vec4 fx30 = edr_left * smoothstep(Cx - w30 / 2.0, Cx + w30 / 2.0, fx_left);
++    vec4 fx60 = edr_up * smoothstep(Cy - w60 / 2.0, Cy + w60 / 2.0, fx_up);
++    vec4 amount = max(max(fx30, fx60), fx45);
++    if (amount == vec4(0.0)) {
++        return smoothed(src, E);
++    }
++    return resolve(E, B, D, F, H, px, amount);
++}
++
++// Square pixels blended with their neighbour only within half an output pixel of the edge; nearest pixel near a key
++vec3 sharp(vec2 src) {
++    texSize = textureSize(uSampler, 0);
++    vec2 scale = 1.0 / max(srcStep, vec2(1e-4));
++    vec2 cell = floor(src);
++    vec2 d = fract(src) - 0.5;
++    vec2 range = max(0.5 - 0.5 / scale, vec2(0.0));
++    vec2 q = cell + (d - clamp(d, -range, range)) * scale;
++    ivec2 b = ivec2(floor(q));
++    vec2 t = fract(q);
++    ivec2 hi = texSize - 1;
++    vec3 c00 = texelFetch(uSampler, clamp(b, ivec2(0), hi), 0).rgb;
++    vec3 c10 = texelFetch(uSampler, clamp(b + ivec2(1, 0), ivec2(0), hi), 0).rgb;
++    vec3 c01 = texelFetch(uSampler, clamp(b + ivec2(0, 1), ivec2(0), hi), 0).rgb;
++    vec3 c11 = texelFetch(uSampler, clamp(b + ivec2(1, 1), ivec2(0), hi), 0).rgb;
++    if (c00 == KEY || c10 == KEY || c01 == KEY || c11 == KEY) {
++        return texelFetch(uSampler, clamp(ivec2(cell), ivec2(0), hi), 0).rgb;
++    }
++    return mix(mix(c00, c10, t.x), mix(c01, c11, t.x), t.y);
++}
++
+ void main()
+ {
+-    mainColour = texture(uSampler, vec2(uv.x, abs(uFlipVertically - uv.y)));
++    vec2 coord = vec2(uv.x, abs(uFlipVertically - uv.y));
++    vec2 src = coord * vec2(textureSize(uSampler, 0));
++    srcStep = fwidth(src);
++    if (uUpscale == 2) {
++        mainColour = vec4(xbr(src), 1.0);
++    } else if (uUpscale == 1) {
++        mainColour = vec4(sharp(src), 1.0);
++    } else {
++        mainColour = texture(uSampler, coord);
++    }
+     if (uDiscardPurplePixels == 1 && mainColour.rgb == vec3(1.0, 0.0, 1.0)) {
+         discard;
+     }
+diff --git a/drivers/glrend/devpixmp.c b/drivers/glrend/devpixmp.c
+index 2d9fae2..1c84ab3 100644
+--- a/drivers/glrend/devpixmp.c
++++ b/drivers/glrend/devpixmp.c
+@@ -323,6 +323,8 @@ br_error BR_CMETHOD_DECL(br_device_pixelmap_gl, rectangleFill)(br_device_pixelma
+ 
+     if (self->use_type == BRT_DEPTH) {
+         //glBindFramebuffer(GL_FRAMEBUFFER, self->asBack.depthbuffer->asBack.glFbo);
++        // Wrecked Carmageddon: glClear() skips the depth buffer while depth writes are off (BR_MATF_INHIBIT_DEPTH_WRITE)
++        glDepthMask(GL_TRUE);
+         glClear(GL_DEPTH_BUFFER_BIT);
+         return BRE_OK;
+     }
+diff --git a/drivers/glrend/devpmglf.c b/drivers/glrend/devpmglf.c
+index 2200683..d190902 100644
+--- a/drivers/glrend/devpmglf.c
++++ b/drivers/glrend/devpmglf.c
+@@ -4,6 +4,8 @@
+ 
+ #include "drv.h"
+ #include <brassert.h>
++#include <stdlib.h>
++#include <string.h>
+ 
+ /*
+  * Default dispatch table for device (defined at end of file)
+@@ -124,6 +126,24 @@ static void SetupFullScreenRectGeometry(br_device_pixelmap* self) {
+     GL_CHECK_ERROR();
+ }
+ 
++// Wrecked Carmageddon: 2D layer upscaling (default.frag.glsl). CARMA_HUD_FILTER: "sharp" (default), "xbr", "nearest"
++static int HudUpscaleMode(void) {
++    static int mode = -1;
++    const char* filter;
++
++    if (mode < 0) {
++        filter = getenv("CARMA_HUD_FILTER");
++        if (filter != NULL && strcmp(filter, "nearest") == 0) {
++            mode = 0;
++        } else if (filter != NULL && strcmp(filter, "xbr") == 0) {
++            mode = 2;
++        } else {
++            mode = 1;
++        }
++    }
++    return mode;
++}
++
+ void RenderFullScreenTextureToFrameBuffer(br_device_pixelmap* self, GLuint textureId, GLuint fb, int flipVertically, int discardPurplePixels) {
+ 
+     int x, y;
+@@ -138,6 +158,7 @@ void RenderFullScreenTextureToFrameBuffer(br_device_pixelmap* self, GLuint textu
+     glUseProgram(self->asFront.video.defaultProgram.program);
+     glUniform1f(self->asFront.video.defaultProgram.uFlipVertically, (float)flipVertically);
+     glUniform1i(self->asFront.video.defaultProgram.uDiscardPurplePixels, discardPurplePixels);
++    glUniform1i(self->asFront.video.defaultProgram.uUpscale, discardPurplePixels ? HudUpscaleMode() : 0);
+     glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+ 
+     glBindVertexArray(0);
+diff --git a/drivers/glrend/drv_ip.h b/drivers/glrend/drv_ip.h
+index 52796b7..2f7b80e 100644
+--- a/drivers/glrend/drv_ip.h
++++ b/drivers/glrend/drv_ip.h
+@@ -78,6 +78,14 @@ struct br_buffer_stored* BufferStoredGLAllocate(br_renderer* renderer, br_token
+ 
+ GLenum BufferStoredGLGetTexture(br_buffer_stored* self);
+ 
++/* Wrecked Carmageddon: per-draw settings carried with deferred draws (v1model.c) */
++void GLRENDI_SaveDrawSettings(struct state_stack* state);
++void GLRENDI_RestoreDrawSettings(struct state_stack* state);
++/* Wrecked Carmageddon: water.c */
++int GLRENDI_WaterIntercept(br_geometry_stored* self, br_renderer* renderer, const gl_groupinfo* groupinfo, const shader_data_model* model, GLuint texture,
++    const br_matrix34* camera_to_world, GLuint sky_tex, const struct state_stack* state);
++void GLRENDI_ResetDrawSettings(void);
++
+ /*
+  * gv1buckt.c
+  */
+diff --git a/drivers/glrend/gstored.c b/drivers/glrend/gstored.c
+index 4e89431..6bc796c 100644
+--- a/drivers/glrend/gstored.c
++++ b/drivers/glrend/gstored.c
+@@ -6,6 +6,7 @@
+ #include "formats.h"
+ #include "state.h"
+ #include <math.h>
++#include <stdlib.h>
+ #include <string.h>
+ 
+ /*
+@@ -55,6 +56,11 @@ static GLuint create_vao(HVIDEO hVideo, GLuint vbo_posn, GLuint vbo, GLuint ibo)
+             sizeof(gl_vertex_f), (void*)offsetof(gl_vertex_f, c));
+     }
+ 
++    glEnableVertexAttribArray(GLREND_ATTRIB_SMOOTH);
++    glVertexAttribPointer(GLREND_ATTRIB_SMOOTH, 4, GL_FLOAT, GL_FALSE, sizeof(gl_vertex_f), (void*)offsetof(gl_vertex_f, smooth));
++    glEnableVertexAttribArray(GLREND_ATTRIB_CREASE);
++    glVertexAttribPointer(GLREND_ATTRIB_CREASE, 4, GL_FLOAT, GL_FALSE, sizeof(gl_vertex_f), (void*)offsetof(gl_vertex_f, crease));
++
+     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
+     glBindVertexArray(0);
+     return vao;
+@@ -78,6 +84,122 @@ static GLuint build_vbo_posn(const struct v11model* model, size_t total_vertices
+     return buf;
+ }
+ 
++/*
++ * Wrecked Carmageddon: smoothing and crease data for curved surfaces. Vertex copies at the same position are clustered
++ * by normal (within about 50 degrees): one cluster is smooth, two a crease, three or more a corner.
++ */
++typedef struct crease_key {
++    br_vector3_f p;
++    br_uint_32 index;
++} crease_key;
++
++static int compare_crease_keys(const void* pA, const void* pB) {
++    const crease_key* a = pA;
++    const crease_key* b = pB;
++    int i;
++
++    for (i = 0; i < 3; i++) {
++        if (a->p.v[i] != b->p.v[i]) {
++            return a->p.v[i] < b->p.v[i] ? -1 : 1;
++        }
++    }
++    return 0;
++}
++
++// Ties keep the original order, so the clustering is deterministic
++static int compare_crease_keys_stable(const void* pA, const void* pB) {
++    int c = compare_crease_keys(pA, pB);
++
++    if (c != 0) {
++        return c;
++    }
++    return ((const crease_key*)pA)->index < ((const crease_key*)pB)->index ? -1 : 1;
++}
++
++static void build_crease_data(const struct v11model* model, gl_vertex_f* vtx, size_t total_vertices) {
++    enum { MAX_CLUSTERS = 8 };
++    crease_key* keys;
++    br_vector3_f sum[MAX_CLUSTERS];
++    br_vector3_f avg[MAX_CLUSTERS];
++    br_uint_8* cluster_of;
++    size_t i, k, start, end;
++    int nclusters, c, best;
++    br_scalar len, dot, best_dot;
++    size_t next;
++
++    // build_vbo() holds the scratch buffer, so use the heap here
++    keys = malloc(total_vertices * (sizeof(crease_key) + 1));
++    if (keys == NULL) {
++        return;
++    }
++    cluster_of = (br_uint_8*)(keys + total_vertices);
++    next = 0;
++    for (br_uint_16 g = 0; g < model->ngroups; ++g) {
++        const struct v11group* gp = model->groups + g;
++        for (br_uint_16 v = 0; v < gp->nvertices; ++v, ++next) {
++            keys[next].p = *(br_vector3_f*)(gp->position + v);
++            keys[next].index = (br_uint_32)next;
++        }
++    }
++    qsort(keys, total_vertices, sizeof(crease_key), compare_crease_keys_stable);
++
++    for (start = 0; start < total_vertices; start = end) {
++        for (end = start + 1; end < total_vertices && compare_crease_keys(&keys[start], &keys[end]) == 0; end++) {
++        }
++        nclusters = 0;
++        for (i = start; i < end; i++) {
++            const br_vector3_f* n = &vtx[keys[i].index].n;
++            best = -1;
++            best_dot = 0.64f;
++            for (c = 0; c < nclusters; c++) {
++                dot = n->v[0] * avg[c].v[0] + n->v[1] * avg[c].v[1] + n->v[2] * avg[c].v[2];
++                if (dot > best_dot) {
++                    best_dot = dot;
++                    best = c;
++                }
++            }
++            if (best < 0 && nclusters < MAX_CLUSTERS) {
++                best = nclusters++;
++                sum[best].v[0] = sum[best].v[1] = sum[best].v[2] = 0.f;
++            } else if (best < 0) {
++                best = MAX_CLUSTERS - 1;
++            }
++            for (k = 0; k < 3; k++) {
++                sum[best].v[k] += n->v[k];
++            }
++            len = sqrtf(sum[best].v[0] * sum[best].v[0] + sum[best].v[1] * sum[best].v[1] + sum[best].v[2] * sum[best].v[2]);
++            for (k = 0; k < 3; k++) {
++                avg[best].v[k] = len > 0.f ? sum[best].v[k] / len : 0.f;
++            }
++            cluster_of[i - start] = (br_uint_8)best;
++        }
++        for (i = start; i < end; i++) {
++            gl_vertex_f* out = &vtx[keys[i].index];
++            const br_vector3_f* a = &avg[cluster_of[i - start]];
++            out->smooth.v[0] = a->v[0];
++            out->smooth.v[1] = a->v[1];
++            out->smooth.v[2] = a->v[2];
++            out->smooth.v[3] = nclusters <= 1 ? 0.f : nclusters == 2 ? 1.f : 2.f;
++            out->crease.v[0] = out->crease.v[1] = out->crease.v[2] = out->crease.v[3] = 0.f;
++            if (nclusters == 2) {
++                br_vector3_f t;
++                t.v[0] = avg[0].v[1] * avg[1].v[2] - avg[0].v[2] * avg[1].v[1];
++                t.v[1] = avg[0].v[2] * avg[1].v[0] - avg[0].v[0] * avg[1].v[2];
++                t.v[2] = avg[0].v[0] * avg[1].v[1] - avg[0].v[1] * avg[1].v[0];
++                len = sqrtf(t.v[0] * t.v[0] + t.v[1] * t.v[1] + t.v[2] * t.v[2]);
++                if (len > 1e-4f) {
++                    out->crease.v[0] = t.v[0] / len;
++                    out->crease.v[1] = t.v[1] / len;
++                    out->crease.v[2] = t.v[2] / len;
++                } else {
++                    out->smooth.v[3] = 2.f; // opposite-facing surfaces: leave it alone
++                }
++            }
++        }
++    }
++    free(keys);
++}
++
+ static GLuint build_vbo(const struct v11model* model, size_t total_vertices) {
+     /* Collate and upload the vertex data. */
+     gl_vertex_f* vtx = (gl_vertex_f*)BrScratchAllocate(total_vertices * sizeof(gl_vertex_f));
+@@ -95,6 +217,7 @@ static GLuint build_vbo(const struct v11model* model, size_t total_vertices) {
+             nextVtx->c.v[3] = BR_ALPHA(gp->vertex_colours[v]) / 255.0f;
+         }
+     }
++    build_crease_data(model, vtx, total_vertices);
+ 
+     glGenBuffers(1, &buf);
+     glBindBuffer(GL_ARRAY_BUFFER, buf);
+@@ -454,6 +577,7 @@ static br_error V1Model_RenderStored(struct br_geometry_stored* self, br_rendere
+             prim->v[2] = groupinfo;
+ 
+             *tmpstate = *state;
++            GLRENDI_SaveDrawSettings(tmpstate);
+ 
+             /*
+              * If the user set a function defer to them.
+diff --git a/drivers/glrend/gstored.h b/drivers/glrend/gstored.h
+index 6c0adad..85b9ece 100644
+--- a/drivers/glrend/gstored.h
++++ b/drivers/glrend/gstored.h
+@@ -23,8 +23,20 @@ typedef struct gl_vertex_f {
+      * Colour
+      */
+     br_vector4_f c;
++
++    /*
++     * Wrecked Carmageddon, for curved surfaces (brender_tess.tese.glsl):
++     * smooth - normal averaged over coincident vertices facing roughly the same way; w: 0 smooth, 1 crease, 2 corner;
++     * crease - direction of the crease line.
++     */
++    br_vector4_f smooth;
++    br_vector4_f crease;
+ } gl_vertex_f;
+ 
++/* Wrecked Carmageddon: attribute slots for .smooth and .crease, unused by the main program */
++#define GLREND_ATTRIB_SMOOTH 8
++#define GLREND_ATTRIB_CREASE 9
++
+ typedef struct gl_groupinfo {
+     /*
+      * Count for glDrawElements(). Use GL_TRIANGLES.
+diff --git a/drivers/glrend/gv1buckt.c b/drivers/glrend/gv1buckt.c
+index 3a94b32..78e174a 100644
+--- a/drivers/glrend/gv1buckt.c
++++ b/drivers/glrend/gv1buckt.c
+@@ -114,9 +114,11 @@ br_error BR_CMETHOD_DECL(br_geometry_v1_buckets_gl, render)(br_geometry_v1_bucke
+                 ASSERT(ObjectIsType((br_object *)geom, BRT_GEOMETRY_STORED));
+ 
+                 *renderer->state.current = *state;
++                GLRENDI_RestoreDrawSettings(state);
+                 BrPoolBlockFree(renderer->state_pool, p->v[1]);
+ 
+                 StoredGLRenderGroup(geom, (br_renderer *)renderer, groupinfo);
++                GLRENDI_ResetDrawSettings();
+             } else {
+                 /*
+                  * We can't handle other things yet.
+diff --git a/drivers/glrend/renderer.c b/drivers/glrend/renderer.c
+index c2bea41..9a094ca 100644
+--- a/drivers/glrend/renderer.c
++++ b/drivers/glrend/renderer.c
+@@ -4,6 +4,22 @@
+ #include "drv.h"
+ #include "brassert.h"
+ 
++/* Wrecked Carmageddon: widescreen */
++static int gWide_scene;
++
++/* Restored after drawing the shadow map */
++GLint gGLREND_scene_viewport[4];
++
++void BR_PUBLIC_ENTRY GLREND_SetWideScene(int on) {
++    gWide_scene = on;
++}
++
++void BR_PUBLIC_ENTRY GLREND_ClearWindow(br_colour colour) {
++    glClearColor(BR_RED(colour) / 255.f, BR_GRN(colour) / 255.f, BR_BLU(colour) / 255.f, 1.f);
++    glClear(GL_COLOR_BUFFER_BIT);
++    glClearColor(0.f, 0.f, 0.f, 1.f);
++}
++
+ /*
+  * Default dispatch table for renderer (defined at end of file)
+  */
+@@ -109,7 +125,17 @@ static void BR_CMETHOD_DECL(br_renderer_gl, sceneBegin)(br_renderer* self) {
+     }
+ 
+     DevicePixelmapGLGetViewport(colour_target->screen, &x, &y, &rx, &ry);
+-    glViewport(colour_target->pm_base_x * rx + x, base_y *ry + y, colour_target->pm_width * rx, colour_target->pm_height * ry);
++    if (gWide_scene && x > 0 && colour_target->pm_base_x == 0) {
++        // Wrecked Carmageddon: widescreen, over the side bars
++        gGLREND_scene_viewport[0] = 0;
++        gGLREND_scene_viewport[2] = colour_target->pm_width * rx + 2 * x;
++    } else {
++        gGLREND_scene_viewport[0] = colour_target->pm_base_x * rx + x;
++        gGLREND_scene_viewport[2] = colour_target->pm_width * rx;
++    }
++    gGLREND_scene_viewport[1] = base_y * ry + y;
++    gGLREND_scene_viewport[3] = colour_target->pm_height * ry;
++    glViewport(gGLREND_scene_viewport[0], gGLREND_scene_viewport[1], gGLREND_scene_viewport[2], gGLREND_scene_viewport[3]);
+ 
+     /* Bind the model UBO here, it's faster than doing it for each model group */
+     glBindBufferBase(GL_UNIFORM_BUFFER, hVideo->brenderProgram.blockBindingModel, hVideo->brenderProgram.uboModel);
+@@ -125,6 +151,8 @@ static void BR_CMETHOD_DECL(br_renderer_gl, sceneBegin)(br_renderer* self) {
+ }
+ 
+ void BR_CMETHOD_DECL(br_renderer_gl, sceneEnd)(br_renderer* self) {
++    GLREND_DrawWater(); /* Wrecked Carmageddon: water not drawn yet */
++    glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE); /* Wrecked Carmageddon: soft alpha (v1model.c) */
+     glDisable(GL_CULL_FACE);
+     glDisable(GL_DEPTH_TEST);
+     glDisable(GL_BLEND);
+diff --git a/drivers/glrend/sbuffer.c b/drivers/glrend/sbuffer.c
+index 13a6438..640b79c 100644
+--- a/drivers/glrend/sbuffer.c
++++ b/drivers/glrend/sbuffer.c
+@@ -2,10 +2,127 @@
+  * Stored buffer methods
+  */
+ #include <stddef.h>
++#include <ctype.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
+ 
+ #include "brassert.h"
+ #include "drv.h"
+ 
++/*
++ * Wrecked Carmageddon: hi-res replacement textures, <dir>/<identifier without extension>-<w>x<h>-<crc32>.png, as tracks
++ * reuse names for different pictures. The PNG must be pure black where the original used palette index 0. The mod's
++ * own carmamod_* textures load from <identifier>.png.
++ */
++#define STB_IMAGE_STATIC
++#define STB_IMAGE_IMPLEMENTATION
++#define STBI_ONLY_PNG
++#include "stb_image.h"
++
++#define MAX_TEXTURE_DIRS 4
++static char gTexture_dirs[MAX_TEXTURE_DIRS][1024];
++static int gTexture_dir_count;
++
++void BR_PUBLIC_ENTRY GLREND_SetTextureDirectory(const char* path) {
++    gTexture_dir_count = 0;
++    GLREND_AddTextureDirectory(path);
++}
++
++void BR_PUBLIC_ENTRY GLREND_AddTextureDirectory(const char* path) {
++    if (gTexture_dir_count < MAX_TEXTURE_DIRS) {
++        BrStrNCpy(gTexture_dirs[gTexture_dir_count], path, sizeof(gTexture_dirs[0]) - 1);
++        gTexture_dir_count++;
++    }
++}
++
++static br_uint_32 pixels_crc32(br_pixelmap* pm) {
++    static br_uint_32 table[256];
++    br_uint_32 crc;
++    br_uint_8* row;
++    int x, y, k;
++
++    if (table[1] == 0) {
++        for (k = 0; k < 256; k++) {
++            crc = k;
++            for (x = 0; x < 8; x++) {
++                crc = (crc & 1) ? 0xEDB88320u ^ (crc >> 1) : crc >> 1;
++            }
++            table[k] = crc;
++        }
++    }
++    crc = 0xFFFFFFFFu;
++    for (y = 0; y < pm->height; y++) {
++        row = (br_uint_8*)pm->pixels + y * pm->row_bytes;
++        for (x = 0; x < pm->width; x++) {
++            crc = table[(crc ^ row[x]) & 0xFF] ^ (crc >> 8);
++        }
++    }
++    return crc ^ 0xFFFFFFFFu;
++}
++
++static br_boolean load_replacement(br_pixelmap* pm, br_boolean* pSoft_alpha) {
++    static int announced;
++    static int log_lookups = -1;
++    char path[1200];
++    char name[256];
++    unsigned char* pixels;
++    char* dot;
++    int width, height, channels;
++    int i;
++    int dir;
++    br_uint_32 crc = 0;
++
++    if (gTexture_dir_count == 0 || pm->identifier == NULL || pm->identifier[0] == '\0') {
++        return BR_FALSE;
++    }
++    for (i = 0; pm->identifier[i] != '\0' && i < (int)sizeof(name) - 1; i++) {
++        name[i] = (char)tolower((unsigned char)pm->identifier[i]);
++    }
++    name[i] = '\0';
++    if ((dot = strrchr(name, '.')) != NULL) {
++        *dot = '\0';
++    }
++    pixels = NULL;
++    for (dir = 0; dir < gTexture_dir_count && pixels == NULL; dir++) {
++        if (strncmp(name, "carmamod_", 9) == 0) {
++            BrSprintfN(path, sizeof(path) - 1, "%s/%s.png", gTexture_dirs[dir], name);
++        } else {
++            if (dir == 0) {
++                crc = pixels_crc32(pm);
++            }
++            BrSprintfN(path, sizeof(path) - 1, "%s/%s-%dx%d-%08x.png", gTexture_dirs[dir], name, pm->width, pm->height, crc);
++        }
++        pixels = stbi_load(path, &width, &height, &channels, 4);
++    }
++    if (log_lookups < 0) {
++        log_lookups = getenv("CARMA_TEXTURE_LOG") != NULL;
++    }
++    if (log_lookups) {
++        BrLogPrintf("GLREND: %s %s\n", pixels != NULL ? "hi-res" : "original", strrchr(path, '/') + 1);
++    }
++    if (pixels == NULL) {
++        return BR_FALSE;
++    }
++    if (!announced) {
++        BrLogPrintf("GLREND: using hi-res textures from %s\n", gTexture_dirs[dir - 1]);
++        announced = 1;
++    }
++    // Partial alpha (smoke, fire): drawn blended instead of colour-keyed
++    *pSoft_alpha = BR_FALSE;
++    if (channels == 4) {
++        for (i = 0; i < width * height; i++) {
++            if (pixels[i * 4 + 3] < 250) {
++                *pSoft_alpha = BR_TRUE;
++                break;
++            }
++        }
++    }
++    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
++    stbi_image_free(pixels);
++    return BR_TRUE;
++}
++
+ /*
+  * Default dispatch table for primitive state (defined at end of file)
+  */
+@@ -183,7 +300,11 @@ static br_error updateMemory(br_buffer_stored* self, br_pixelmap* pm) {
+ 
+     glBindTexture(GL_TEXTURE_2D, self->gl_tex);
+     self->paletted_source_dirty = BR_FALSE;
+-    if (pm->type == BR_PMT_INDEX_8) {
++    self->soft_alpha = BR_FALSE;
++    if (pm->type == BR_PMT_INDEX_8 && load_replacement(pm, &self->soft_alpha)) {
++        // Already full colour, so no palette conversion at draw time
++        self->palette_pointer = NULL;
++    } else if (pm->type == BR_PMT_INDEX_8) {
+         // if paletted, then wait until we are displaying the texture to convert it to 32 bit
+         self->paletted_source_dirty = BR_TRUE;
+         self->palette_pointer = ObjectDevice(self)->clut;
+diff --git a/drivers/glrend/sbuffer.h b/drivers/glrend/sbuffer.h
+index 1fec5ca..3ee287b 100644
+--- a/drivers/glrend/sbuffer.h
++++ b/drivers/glrend/sbuffer.h
+@@ -48,6 +48,9 @@ typedef struct br_buffer_stored {
+ 
+     br_boolean blended;
+ 
++    /* Wrecked Carmageddon: hi-res replacement with partial alpha */
++    br_boolean soft_alpha;
++
+     /*
+      * Object query templates.
+      * FIXME: These should be stored on the device, but that can't
+diff --git a/drivers/glrend/shader_brender.c b/drivers/glrend/shader_brender.c
+index cf76eac..2ac1e9a 100644
+--- a/drivers/glrend/shader_brender.c
++++ b/drivers/glrend/shader_brender.c
+@@ -3,6 +3,11 @@
+ #include "brassert.h"
+ #include "brender.frag.glsl.h"
+ #include "brender.vert.glsl.h"
++#include "brender_tess.tesc.glsl.h"
++#include "brender_tess.tese.glsl.h"
++#include "brender_tess.vert.glsl.h"
++#include <stdlib.h>
++#include <string.h>
+ 
+ static void VIDEOI_GetShaderVariables(HVIDEO hVideo) {
+     glGenBuffers(1, &hVideo->brenderProgram.uboScene);
+@@ -24,9 +29,141 @@ static void VIDEOI_GetShaderVariables(HVIDEO hVideo) {
+     hVideo->brenderProgram.attributes.aNormal = glGetAttribLocation(hVideo->brenderProgram.program, "aNormal");
+     hVideo->brenderProgram.attributes.aColour = glGetAttribLocation(hVideo->brenderProgram.program, "aColour");
+     hVideo->brenderProgram.uniforms.main_texture = glGetUniformLocation(hVideo->brenderProgram.program, "main_texture");
++
++    /* Wrecked Carmageddon: reflection sky on texture unit 1 */
++    glUseProgram(hVideo->brenderProgram.program);
++    glUniform1i(glGetUniformLocation(hVideo->brenderProgram.program, "env_texture"), 1);
++    hVideo->brenderProgram.uniforms.dl_count = glGetUniformLocation(hVideo->brenderProgram.program, "dl_count");
++    hVideo->brenderProgram.uniforms.dl_position = glGetUniformLocation(hVideo->brenderProgram.program, "dl_position");
++    hVideo->brenderProgram.uniforms.dl_colour = glGetUniformLocation(hVideo->brenderProgram.program, "dl_colour");
++    hVideo->brenderProgram.uniforms.dl_direction = glGetUniformLocation(hVideo->brenderProgram.program, "dl_direction");
++    glUniform1i(hVideo->brenderProgram.uniforms.dl_count, 0);
++    /* Wrecked Carmageddon: shadow map on texture unit 2 */
++    glUniform1i(glGetUniformLocation(hVideo->brenderProgram.program, "shadow_map"), 2);
++    hVideo->brenderProgram.uniforms.shadow_on = glGetUniformLocation(hVideo->brenderProgram.program, "shadow_on");
++    hVideo->brenderProgram.uniforms.shadow_vp = glGetUniformLocation(hVideo->brenderProgram.program, "shadow_vp");
++    hVideo->brenderProgram.uniforms.shadow_light = glGetUniformLocation(hVideo->brenderProgram.program, "shadow_light");
++    hVideo->brenderProgram.uniforms.shadow_texel = glGetUniformLocation(hVideo->brenderProgram.program, "shadow_texel");
++    glUniform1i(hVideo->brenderProgram.uniforms.shadow_on, 0);
+     GL_CHECK_ERROR();
+ }
+ 
++/*
++ * Wrecked Carmageddon: curved-surface program (OpenGL 4.0 tessellation). If anything fails, cars are drawn flat.
++ */
++static GLuint CompileTessStage(GLenum type, const char* name, const char* source, GLint length) {
++    GLuint shader;
++    GLint status;
++    char log[1024];
++
++    shader = glCreateShader(type);
++    glShaderSource(shader, 1, &source, &length);
++    glCompileShader(shader);
++    glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
++    if (status != GL_TRUE) {
++        glGetShaderInfoLog(shader, sizeof(log), NULL, log);
++        BrLogPrintf("GLREND: curved surfaces off, %s failed to compile:\n%s\n", name, log);
++        glDeleteShader(shader);
++        return 0;
++    }
++    return shader;
++}
++
++// brender.frag.glsl for a GLSL 4.10 core context: GL_CORE parts only, no extension line
++static char* Frag410(void) {
++    char* out;
++    char line[2048];
++    size_t i, n, len;
++    int skip;
++
++    out = calloc(1, sizeof(BRENDER_FRAG_GLSL) + 64);
++    skip = 0;
++    for (i = 0; i < sizeof(BRENDER_FRAG_GLSL); i += n) {
++        for (n = 0; i + n < sizeof(BRENDER_FRAG_GLSL) && BRENDER_FRAG_GLSL[i + n] != '\n'; n++) {
++        }
++        n++;
++        len = n < sizeof(line) - 1 ? n : sizeof(line) - 1;
++        memcpy(line, BRENDER_FRAG_GLSL + i, len);
++        line[len] = '\0';
++        if (strncmp(line, "##ifdef GL_ES", 13) == 0) {
++            skip = 1;
++        } else if (strncmp(line, "##ifdef GL_CORE", 15) == 0 || strncmp(line, "##endif", 7) == 0) {
++            skip = 0;
++        } else if (!skip && strncmp(line, "#extension", 10) != 0) {
++            strcat(out, strncmp(line, "#version", 8) == 0 ? "#version 410 core\n" : line);
++        }
++    }
++    return out;
++}
++
++static void CompileTessProgram(HVIDEO hVideo) {
++    static const char* names[] = { "aPosition", "aUV", "aNormal", "aColour" };
++    GLint locations[4];
++    GLuint stages[4];
++    GLuint program;
++    GLint status;
++    char* frag;
++    char log[1024];
++    int i;
++
++    hVideo->tessProgram.program = 0;
++    if (GLVersion.major < 4 || getenv("CARMA_TESSELLATION") != NULL && atoi(getenv("CARMA_TESSELLATION")) == 0) {
++        return;
++    }
++    frag = Frag410();
++    stages[0] = CompileTessStage(GL_VERTEX_SHADER, "brender_tess.vert", BRENDER_TESS_VERT_GLSL, sizeof(BRENDER_TESS_VERT_GLSL));
++    stages[1] = CompileTessStage(0x8E88 /* GL_TESS_CONTROL_SHADER */, "brender_tess.tesc", BRENDER_TESS_TESC_GLSL, sizeof(BRENDER_TESS_TESC_GLSL));
++    stages[2] = CompileTessStage(0x8E87 /* GL_TESS_EVALUATION_SHADER */, "brender_tess.tese", BRENDER_TESS_TESE_GLSL, sizeof(BRENDER_TESS_TESE_GLSL));
++    stages[3] = CompileTessStage(GL_FRAGMENT_SHADER, "brender.frag (4.10)", frag, (GLint)strlen(frag));
++    free(frag);
++    if (!stages[0] || !stages[1] || !stages[2] || !stages[3]) {
++        return;
++    }
++
++    program = glCreateProgram();
++    for (i = 0; i < 4; i++) {
++        glAttachShader(program, stages[i]);
++    }
++    // Same attribute slots as brenderProgram: both use the same vertex arrays
++    locations[0] = hVideo->brenderProgram.attributes.aPosition;
++    locations[1] = hVideo->brenderProgram.attributes.aUV;
++    locations[2] = hVideo->brenderProgram.attributes.aNormal;
++    locations[3] = hVideo->brenderProgram.attributes.aColour;
++    for (i = 0; i < 4; i++) {
++        if (locations[i] >= 0) {
++            glBindAttribLocation(program, locations[i], names[i]);
++        }
++    }
++    glBindAttribLocation(program, GLREND_ATTRIB_SMOOTH, "aSmooth");
++    glBindAttribLocation(program, GLREND_ATTRIB_CREASE, "aCrease");
++    glLinkProgram(program);
++    for (i = 0; i < 4; i++) {
++        glDeleteShader(stages[i]);
++    }
++    glGetProgramiv(program, GL_LINK_STATUS, &status);
++    if (status != GL_TRUE) {
++        glGetProgramInfoLog(program, sizeof(log), NULL, log);
++        BrLogPrintf("GLREND: curved surfaces off, link failed:\n%s\n", log);
++        glDeleteProgram(program);
++        return;
++    }
++
++    glUniformBlockBinding(program, glGetUniformBlockIndex(program, "br_scene_state"), hVideo->brenderProgram.blockBindingScene);
++    glUniformBlockBinding(program, glGetUniformBlockIndex(program, "br_model_state"), hVideo->brenderProgram.blockBindingModel);
++    glUseProgram(program);
++    glUniform1i(glGetUniformLocation(program, "main_texture"), hVideo->brenderProgram.mainTextureBinding);
++    glUniform1i(glGetUniformLocation(program, "env_texture"), 1);
++    hVideo->tessProgram.tess_level = glGetUniformLocation(program, "tess_level");
++    hVideo->tessProgram.dl_count = glGetUniformLocation(program, "dl_count");
++    hVideo->tessProgram.dl_position = glGetUniformLocation(program, "dl_position");
++    hVideo->tessProgram.dl_colour = glGetUniformLocation(program, "dl_colour");
++    hVideo->tessProgram.dl_direction = glGetUniformLocation(program, "dl_direction");
++    glUniform1i(hVideo->tessProgram.dl_count, 0);
++    glUseProgram(hVideo->brenderProgram.program);
++    hVideo->tessProgram.program = program;
++    BrLogPrintf("GLREND: curved surfaces for cars available\n");
++}
++
+ br_boolean VIDEOI_CompileBRenderShader(HVIDEO hVideo, const char* vertPath, const char* fragPath) {
+     GLuint vert, frag;
+ 
+@@ -97,6 +234,7 @@ br_boolean VIDEOI_CompileBRenderShader(HVIDEO hVideo, const char* vertPath, cons
+         }
+ 
+         VIDEOI_GetShaderVariables(hVideo);
++        CompileTessProgram(hVideo);
+     }
+ 
+     GL_CHECK_ERROR();
+diff --git a/drivers/glrend/shader_default.c b/drivers/glrend/shader_default.c
+index 69aaa92..2b2a0d9 100644
+--- a/drivers/glrend/shader_default.c
++++ b/drivers/glrend/shader_default.c
+@@ -25,6 +25,7 @@ br_boolean VIDEOI_CompileDefaultShader(HVIDEO hVideo) {
+         hVideo->defaultProgram.uMVP = glGetUniformLocation(hVideo->defaultProgram.program, "uMVP");
+         hVideo->defaultProgram.uFlipVertically = glGetUniformLocation(hVideo->defaultProgram.program, "uFlipVertically");
+         hVideo->defaultProgram.uDiscardPurplePixels = glGetUniformLocation(hVideo->defaultProgram.program, "uDiscardPurplePixels");
++        hVideo->defaultProgram.uUpscale = glGetUniformLocation(hVideo->defaultProgram.program, "uUpscale");
+         glUseProgram(hVideo->defaultProgram.program);
+     }
+ 
+diff --git a/drivers/glrend/state.h b/drivers/glrend/state.h
+index 9e05ef1..3491a4a 100644
+--- a/drivers/glrend/state.h
++++ b/drivers/glrend/state.h
+@@ -214,6 +214,11 @@ typedef struct state_stack {
+     state_hidden hidden;
+ 
+     br_uint_32 valid;
++
++    /* Wrecked Carmageddon: per-draw settings kept with deferred (blended) draws */
++    float carmamod_reflectivity;
++    int carmamod_tess_level;
++    int carmamod_shadow; /* casting and receiving */
+ } state_stack;
+ 
+ typedef struct {
+diff --git a/drivers/glrend/underwater.frag.glsl b/drivers/glrend/underwater.frag.glsl
+new file mode 100644
+index 0000000..c0a1625
+--- /dev/null
++++ b/drivers/glrend/underwater.frag.glsl
+@@ -0,0 +1,61 @@
++#version 410 core
++
++/* The view from under water (water.c), drawn over the finished 3D scene */
++
++uniform sampler2D scene_colour;
++uniform sampler2D scene_depth;
++uniform mat4 u_inv_projection;
++uniform mat4 u_view_to_world;
++uniform vec4 u_viewport;  /* scene viewport, pixels */
++uniform vec2 u_drawable;  /* window, pixels */
++uniform float u_time;     /* seconds */
++uniform vec3 u_tint;
++uniform float u_surface;  /* surface height, world */
++
++out vec4 fragColour;
++
++float hash(vec2 p) {
++    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
++}
++
++float noise(vec2 p) {
++    vec2 i = floor(p);
++    vec2 f = fract(p);
++    vec2 u = f * f * (3.0 - 2.0 * f);
++    return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
++}
++
++float caustics(vec2 p, float t) {
++    float c = 0.0;
++    c += abs(sin(p.x * 7.0 + sin(p.y * 5.0 + t * 1.3) * 1.5 + t));
++    c += abs(sin(p.y * 6.0 + sin(p.x * 4.0 - t * 1.1) * 1.5 - t * 0.8));
++    return pow(1.0 - clamp(c * 0.5, 0.0, 1.0), 6.0);
++}
++
++void main()
++{
++    vec2 frag = gl_FragCoord.xy;
++    vec2 local = (frag - u_viewport.xy) / u_viewport.zw;
++    vec2 wobble = vec2(sin(local.y * 22.0 + u_time * 2.1), cos(local.x * 18.0 + u_time * 1.7)) * 0.004 * u_viewport.zw;
++    vec2 uv = clamp(frag + wobble, u_viewport.xy + 1.0, u_viewport.xy + u_viewport.zw - 1.0) / u_drawable;
++    vec3 colour = texture(scene_colour, uv).rgb;
++    float depth = texture(scene_depth, uv).r;
++
++    vec2 ndc = local * 2.0 - 1.0;
++    vec4 v = u_inv_projection * vec4(ndc, depth * 2.0 - 1.0, 1.0);
++    vec3 view = v.xyz / v.w;
++    float dist = depth >= 1.0 ? 1000.0 : length(view);
++    vec3 world = (u_view_to_world * vec4(view, 1.0)).xyz;
++
++    /* Stronger nearer the surface */
++    if (depth < 1.0) {
++        float below = max(0.0, u_surface - world.y);
++        colour += colour * caustics(world.xz * 3.0, u_time) * 0.9 * exp(-below * 4.0);
++    }
++    float murk = 1.0 - exp(-dist * 0.9);
++    colour = mix(colour * vec3(0.55, 0.85, 0.9), u_tint, murk);
++    /* Light shafts from the surface */
++    float shafts = noise(vec2(local.x * 9.0 + local.y * 2.5 + u_time * 0.15, u_time * 0.1)) * smoothstep(0.1, 1.0, local.y);
++    colour += u_tint * 1.4 * pow(shafts, 3.0) * 0.6;
++    fragColour = vec4(colour, 1.0);
++}
+diff --git a/drivers/glrend/v1model.c b/drivers/glrend/v1model.c
+index cc3433c..ddbd615 100644
+--- a/drivers/glrend/v1model.c
++++ b/drivers/glrend/v1model.c
+@@ -3,6 +3,7 @@
+  */
+ #include "brassert.h"
+ #include "drv.h"
++#include <math.h>
+ #include <string.h>
+ 
+ static void apply_blend_mode(state_stack* self) {
+@@ -271,13 +272,22 @@ static void apply_stored_properties(HVIDEO hVideo, state_stack* state, uint32_t
+         if (GLAD_GL_EXT_texture_filter_anisotropic)
+             glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, maxAnisotropy);
+ 
++        // Wrecked Carmageddon: soft alpha textures. On a solid material use alpha-to-coverage: soft edges that still
++        // write depth, in any draw order
++        model->texture_alpha = state->prim.colour_map != NULL && state->prim.colour_map->soft_alpha;
++        if (model->texture_alpha && !(state->prim.flags & PRIMF_BLEND)) {
++            glEnable(GL_SAMPLE_ALPHA_TO_COVERAGE);
++        } else {
++            glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
++        }
+         blending_on = (state->prim.flags & PRIMF_BLEND) || (state->prim.colour_map != NULL && state->prim.colour_map->blended);
+         if (blending_on) {
+             glEnable(GL_BLEND);
+-            model->alpha = state->prim.alpha_val / 255.0f;
++            model->alpha = (state->prim.flags & PRIMF_BLEND) ? state->prim.alpha_val / 255.0f : 1.0f;
+             apply_blend_mode(state);
+         } else {
+             glDisable(GL_BLEND);
++            model->alpha = 1.0f; // Wrecked Carmageddon: so dynamic lights apply
+         }
+ 
+         model->fog_enabled = state->prim.fog_enabled;
+@@ -289,6 +299,402 @@ static void apply_stored_properties(HVIDEO hVideo, state_stack* state, uint32_t
+     GL_CHECK_ERROR();
+ }
+ 
++/*
++ * Wrecked Carmageddon: reflections and dynamic lights. Lights come in world space, are uploaded in view space.
++ */
++static struct {
++    float amount;
++    GLuint sky_tex;
++    br_matrix34 camera_to_world;
++    br_matrix4 view_to_world;
++    float sky_width;
++    float sky_height;
++    float sky_underground;
++} gReflection;
++
++static struct {
++    glrend_light lights[GLREND_MAX_LIGHTS];
++    int count;
++    int dirty;      // brenderProgram needs the lights uploaded
++    int dirty_tess; // tessProgram needs them too
++} gLights;
++
++static int gTess_level;
++
++void BR_PUBLIC_ENTRY GLREND_SetTessellation(int level) {
++    gTess_level = level;
++}
++
++static int gShadow_saved_flags;
++static int GLRENDI_ShadowFlags(void);
++static void GLRENDI_SetShadowFlags(int flags);
++
++void GLRENDI_SaveDrawSettings(struct state_stack* state) {
++    state->carmamod_reflectivity = gReflection.amount;
++    state->carmamod_tess_level = gTess_level;
++    state->carmamod_shadow = GLRENDI_ShadowFlags();
++}
++
++static float gSaved_reflectivity;
++static int gSaved_tess_level;
++
++void GLRENDI_RestoreDrawSettings(struct state_stack* state) {
++    gSaved_reflectivity = gReflection.amount;
++    gSaved_tess_level = gTess_level;
++    gShadow_saved_flags = GLRENDI_ShadowFlags();
++    gReflection.amount = state->carmamod_reflectivity;
++    gTess_level = state->carmamod_tess_level;
++    GLRENDI_SetShadowFlags(state->carmamod_shadow);
++}
++
++void GLRENDI_ResetDrawSettings(void) {
++    gReflection.amount = gSaved_reflectivity;
++    gTess_level = gSaved_tess_level;
++    GLRENDI_SetShadowFlags(gShadow_saved_flags);
++}
++
++void BR_PUBLIC_ENTRY GLREND_SetCamera(br_matrix34* camera_to_world) {
++    gReflection.camera_to_world = *camera_to_world;
++    BrMatrix4Copy34(&gReflection.view_to_world, camera_to_world);
++    gLights.dirty = 1;
++    gLights.dirty_tess = 1;
++}
++
++void BR_PUBLIC_ENTRY GLREND_SetReflection(float amount) {
++    gReflection.amount = amount;
++}
++
++void BR_PUBLIC_ENTRY GLREND_SetReflectionEnvironment(br_pixelmap* sky, float sky_width, float sky_height, float sky_underground) {
++    gReflection.sky_tex = (sky != NULL && sky->stored != NULL) ? BufferStoredGLGetTexture(sky->stored) : 0;
++    gReflection.sky_width = sky_width;
++    gReflection.sky_height = sky_height;
++    gReflection.sky_underground = sky_underground;
++}
++
++void BR_PUBLIC_ENTRY GLREND_SetLights(const glrend_light* lights, int count) {
++    if (count > GLREND_MAX_LIGHTS) {
++        count = GLREND_MAX_LIGHTS;
++    }
++    memcpy(gLights.lights, lights, sizeof(glrend_light) * count);
++    gLights.count = count;
++    gLights.dirty = 1;
++    gLights.dirty_tess = 1;
++}
++
++static void UploadLights(GLint count_loc, GLint position_loc, GLint colour_loc, GLint direction_loc) {
++    GLfloat position[GLREND_MAX_LIGHTS][4];
++    GLfloat colour[GLREND_MAX_LIGHTS][4];
++    GLfloat direction[GLREND_MAX_LIGHTS][4];
++    br_matrix34 world_to_view;
++    br_vector3 v;
++    int i;
++
++    BrMatrix34Inverse(&world_to_view, &gReflection.camera_to_world);
++    for (i = 0; i < gLights.count; i++) {
++        const glrend_light* l = &gLights.lights[i];
++        BrMatrix34ApplyP(&v, (br_vector3*)&l->position, &world_to_view);
++        position[i][0] = v.v[0];
++        position[i][1] = v.v[1];
++        position[i][2] = v.v[2];
++        position[i][3] = l->radius;
++        BrMatrix34ApplyV(&v, (br_vector3*)&l->direction, &world_to_view);
++        direction[i][0] = v.v[0];
++        direction[i][1] = v.v[1];
++        direction[i][2] = v.v[2];
++        direction[i][3] = l->spot_inner_cos;
++        colour[i][0] = l->colour.v[0];
++        colour[i][1] = l->colour.v[1];
++        colour[i][2] = l->colour.v[2];
++        colour[i][3] = l->spot_outer_cos;
++    }
++    glUniform1i(count_loc, gLights.count);
++    if (gLights.count > 0) {
++        glUniform4fv(position_loc, gLights.count, &position[0][0]);
++        glUniform4fv(colour_loc, gLights.count, &colour[0][0]);
++        glUniform4fv(direction_loc, gLights.count, &direction[0][0]);
++    }
++}
++
++/*
++ * Wrecked Carmageddon: sun shadows. Casters (drawn before the track) also go into a depth map seen from the sun.
++ * Keyed and soft-alpha see-through parts cast no shadow.
++ */
++#define SHADOW_MAP_SIZE 2048
++
++extern GLint gGLREND_scene_viewport[4];
++
++static struct {
++    int active;
++    int casting;
++    int receiving;
++    int dirty;     /* brenderProgram needs the uniforms */
++    int failed;
++    GLuint fbo;
++    GLuint depth_tex;
++    GLuint program;
++    GLint loc_mvp;
++    GLint loc_key;
++    GLint loc_alpha;
++    br_matrix4 light_vp;  /* world to the map's clip space (row vectors, as BRender) */
++    br_vector3 light_dir; /* world space */
++    int casters;          /* this frame */
++} gShadow;
++
++static const char* gShadow_vertex_src = "#version 410 core\n"
++    "uniform mat4 u_mvp;\n"
++    "in vec3 aPosition;\n"
++    "in vec2 aUV;\n"
++    "out vec2 v_uv;\n"
++    "void main() { v_uv = aUV; gl_Position = u_mvp * vec4(aPosition, 1.0); }\n";
++
++static const char* gShadow_fragment_src = "#version 410 core\n"
++    "uniform sampler2D main_texture;\n"
++    "uniform int u_key;\n"
++    "uniform int u_alpha;\n"
++    "in vec2 v_uv;\n"
++    "out vec4 colour;\n"
++    "void main() {\n"
++    "    if (u_key != 0 || u_alpha != 0) {\n"
++    "        vec4 t = texture(main_texture, v_uv);\n"
++    "        if ((u_alpha != 0 && t.a < 0.5) || (u_alpha == 0 && t.rgb == vec3(0.0))) discard;\n"
++    "    }\n"
++    "    colour = vec4(1.0);\n"
++    "}\n";
++
++static GLuint ShadowCompile(GLenum type, const char* src) {
++    GLuint shader;
++    GLint status;
++    char log[512];
++
++    shader = glCreateShader(type);
++    glShaderSource(shader, 1, &src, NULL);
++    glCompileShader(shader);
++    glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
++    if (status != GL_TRUE) {
++        glGetShaderInfoLog(shader, sizeof(log), NULL, log);
++        BrLogPrintf("GLREND: no sun shadows, shader failed:\n%s\n", log);
++        glDeleteShader(shader);
++        return 0;
++    }
++    return shader;
++}
++
++static int ShadowInit(HVIDEO hVideo) {
++    GLuint vs, fs;
++    GLint status;
++
++    if (gShadow.program != 0) {
++        return 1;
++    }
++    if (gShadow.failed || GLVersion.major < 4) {
++        gShadow.failed = 1;
++        return 0;
++    }
++    vs = ShadowCompile(GL_VERTEX_SHADER, gShadow_vertex_src);
++    fs = ShadowCompile(GL_FRAGMENT_SHADER, gShadow_fragment_src);
++    if (vs == 0 || fs == 0) {
++        gShadow.failed = 1;
++        return 0;
++    }
++    gShadow.program = glCreateProgram();
++    glAttachShader(gShadow.program, vs);
++    glAttachShader(gShadow.program, fs);
++    /* Same attribute slots as brenderProgram: same vertex arrays */
++    glBindAttribLocation(gShadow.program, hVideo->brenderProgram.attributes.aPosition, "aPosition");
++    if (hVideo->brenderProgram.attributes.aUV >= 0) {
++        glBindAttribLocation(gShadow.program, hVideo->brenderProgram.attributes.aUV, "aUV");
++    }
++    glLinkProgram(gShadow.program);
++    glDeleteShader(vs);
++    glDeleteShader(fs);
++    glGetProgramiv(gShadow.program, GL_LINK_STATUS, &status);
++    if (status != GL_TRUE) {
++        BrLogPrintf("GLREND: no sun shadows, link failed\n");
++        glDeleteProgram(gShadow.program);
++        gShadow.program = 0;
++        gShadow.failed = 1;
++        return 0;
++    }
++    gShadow.loc_mvp = glGetUniformLocation(gShadow.program, "u_mvp");
++    gShadow.loc_key = glGetUniformLocation(gShadow.program, "u_key");
++    gShadow.loc_alpha = glGetUniformLocation(gShadow.program, "u_alpha");
++    glUseProgram(gShadow.program);
++    glUniform1i(glGetUniformLocation(gShadow.program, "main_texture"), 0);
++    glUseProgram(hVideo->brenderProgram.program);
++
++    glGenTextures(1, &gShadow.depth_tex);
++    glBindTexture(GL_TEXTURE_2D, gShadow.depth_tex);
++    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++    glGenFramebuffers(1, &gShadow.fbo);
++    glBindFramebuffer(GL_FRAMEBUFFER, gShadow.fbo);
++    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, gShadow.depth_tex, 0);
++    glDrawBuffer(GL_NONE);
++    glReadBuffer(GL_NONE);
++    status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
++    glBindFramebuffer(GL_FRAMEBUFFER, 0);
++    glBindTexture(GL_TEXTURE_2D, 0);
++    if (status != GL_FRAMEBUFFER_COMPLETE) {
++        BrLogPrintf("GLREND: no sun shadows, framebuffer incomplete (0x%x)\n", status);
++        gShadow.failed = 1;
++        return 0;
++    }
++    BrLogPrintf("GLREND: sun shadows on\n");
++    return 1;
++}
++
++static int gShadow_needs_clear;
++
++/* Carried with deferred draws (GLRENDI_SaveDrawSettings()) */
++static int GLRENDI_ShadowFlags(void) {
++    return gShadow.casting | (gShadow.receiving << 1);
++}
++
++static void GLRENDI_SetShadowFlags(int flags) {
++    gShadow.casting = flags & 1;
++    gShadow.receiving = (flags >> 1) & 1;
++}
++
++void BR_PUBLIC_ENTRY GLREND_ShadowBegin(const br_vector3* pLight_dir, const br_vector3* pCentre, float pExtent) {
++    br_vector3 x, y, z, up, centre;
++    br_matrix4 world_to_light, projection;
++    br_scalar lx, ly, texel;
++    const br_scalar depth = 40.f; /* world units either side of the centre, along the light */
++    int i;
++
++    if (gShadow.failed) {
++        return;
++    }
++    BrVector3Normalise(&gShadow.light_dir, (br_vector3*)pLight_dir);
++    /* The map looks along the light: its z axis points back at the sun */
++    BrVector3Negate(&z, &gShadow.light_dir);
++    BrVector3Set(&up, 0.f, 1.f, 0.f);
++    if (fabsf(z.v[1]) > 0.99f) {
++        BrVector3Set(&up, 0.f, 0.f, 1.f);
++    }
++    BrVector3Cross(&x, &up, &z);
++    BrVector3Normalise(&x, &x);
++    BrVector3Cross(&y, &z, &x);
++    /* Snap to whole texels so shadow edges don't crawl */
++    texel = 2.f * pExtent / SHADOW_MAP_SIZE;
++    lx = BrVector3Dot((br_vector3*)pCentre, &x);
++    ly = BrVector3Dot((br_vector3*)pCentre, &y);
++    centre = *pCentre;
++    for (i = 0; i < 3; i++) {
++        centre.v[i] += x.v[i] * (floorf(lx / texel) * texel - lx) + y.v[i] * (floorf(ly / texel) * texel - ly);
++    }
++    BrMatrix4Identity(&world_to_light);
++    for (i = 0; i < 3; i++) {
++        world_to_light.m[i][0] = x.v[i];
++        world_to_light.m[i][1] = y.v[i];
++        world_to_light.m[i][2] = z.v[i];
++    }
++    world_to_light.m[3][0] = -BrVector3Dot(&centre, &x);
++    world_to_light.m[3][1] = -BrVector3Dot(&centre, &y);
++    world_to_light.m[3][2] = -BrVector3Dot(&centre, &z);
++    BrMatrix4Identity(&projection);
++    projection.m[0][0] = 1.f / pExtent;
++    projection.m[1][1] = 1.f / pExtent;
++    projection.m[2][2] = -1.f / depth; /* nearer the sun, smaller depth */
++    BrMatrix4Mul(&gShadow.light_vp, &world_to_light, &projection);
++    gShadow.active = 1;
++    gShadow.dirty = 1;
++    gShadow.casters = 0;
++    gShadow_needs_clear = 1;
++}
++
++void BR_PUBLIC_ENTRY GLREND_ShadowCasting(int on) {
++    gShadow.casting = on;
++}
++
++void BR_PUBLIC_ENTRY GLREND_ShadowReceiving(int on) {
++    gShadow.receiving = on;
++}
++
++void BR_PUBLIC_ENTRY GLREND_ShadowEnd(void) {
++    gShadow.active = 0;
++    gShadow.casting = 0;
++    gShadow.receiving = 0;
++    gShadow.dirty = 1;
++}
++
++/* Draws the group into the shadow map, then restores the scene's state */
++static void DrawShadowCaster(HVIDEO hVideo, const gl_groupinfo* groupinfo, const shader_data_model* model, br_boolean blending, br_boolean depth_write) {
++    br_matrix4 model_to_world, mvp;
++
++    if (!ShadowInit(hVideo)) {
++        return;
++    }
++    glBindFramebuffer(GL_FRAMEBUFFER, gShadow.fbo);
++    glViewport(0, 0, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
++    glDepthMask(GL_TRUE);
++    if (gShadow_needs_clear) {
++        glClear(GL_DEPTH_BUFFER_BIT);
++        gShadow_needs_clear = 0;
++    }
++    glDisable(GL_BLEND);
++    glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
++    glEnable(GL_DEPTH_TEST);
++    glDepthFunc(GL_LESS);
++    glUseProgram(gShadow.program);
++    BrMatrix4Mul(&model_to_world, &model->model_view, &gReflection.view_to_world);
++    BrMatrix4Mul(&mvp, &model_to_world, &gShadow.light_vp);
++    glUniformMatrix4fv(gShadow.loc_mvp, 1, GL_FALSE, &mvp.m[0][0]);
++    glUniform1i(gShadow.loc_key, !model->disable_texture && !model->disable_colour_key);
++    glUniform1i(gShadow.loc_alpha, !model->disable_texture && model->texture_alpha);
++    glDrawElements(GL_TRIANGLES, groupinfo->count, GL_UNSIGNED_SHORT, groupinfo->offset);
++    gShadow.casters++;
++
++    glBindFramebuffer(GL_FRAMEBUFFER, 0);
++    glViewport(gGLREND_scene_viewport[0], gGLREND_scene_viewport[1], gGLREND_scene_viewport[2], gGLREND_scene_viewport[3]);
++    glUseProgram(hVideo->brenderProgram.program);
++    glDepthMask(depth_write ? GL_TRUE : GL_FALSE);
++    if (blending) {
++        glEnable(GL_BLEND);
++    }
++    if (model->texture_alpha && !blending) {
++        glEnable(GL_SAMPLE_ALPHA_TO_COVERAGE);
++    }
++}
++
++static void UploadShadow(HVIDEO hVideo) {
++    br_matrix34 world_to_view;
++    br_vector3 v;
++
++    glUniform1i(hVideo->brenderProgram.uniforms.shadow_on, gShadow.active && gShadow.program != 0);
++    if (gShadow.active && gShadow.program != 0) {
++        glUniformMatrix4fv(hVideo->brenderProgram.uniforms.shadow_vp, 1, GL_FALSE, &gShadow.light_vp.m[0][0]);
++        BrMatrix34Inverse(&world_to_view, &gReflection.camera_to_world);
++        BrMatrix34ApplyV(&v, &gShadow.light_dir, &world_to_view);
++        BrVector3Normalise(&v, &v);
++        glUniform3f(hVideo->brenderProgram.uniforms.shadow_light, v.v[0], v.v[1], v.v[2]);
++        glUniform1f(hVideo->brenderProgram.uniforms.shadow_texel, 1.f / SHADOW_MAP_SIZE);
++    }
++}
++
++// PN-triangle patches (brender_tess.tese.glsl)
++static void DrawTessellated(HVIDEO hVideo, br_device_pixelmap* screen, const gl_groupinfo* groupinfo) {
++    typedef void (*patch_parameteri_fn)(GLenum, GLint);
++    static patch_parameteri_fn patch_parameteri;
++
++    if (patch_parameteri == NULL) {
++        patch_parameteri = (patch_parameteri_fn)DevicePixelmapGLGetGetProcAddress(screen)("glPatchParameteri");
++    }
++    glUseProgram(hVideo->tessProgram.program);
++    if (gLights.dirty_tess) {
++        UploadLights(hVideo->tessProgram.dl_count, hVideo->tessProgram.dl_position, hVideo->tessProgram.dl_colour,
++            hVideo->tessProgram.dl_direction);
++        gLights.dirty_tess = 0;
++    }
++    glUniform1f(hVideo->tessProgram.tess_level, (GLfloat)gTess_level);
++    patch_parameteri(0x8E72 /* GL_PATCH_VERTICES */, 3);
++    glDrawElements(0x000E /* GL_PATCHES */, groupinfo->count, GL_UNSIGNED_SHORT, groupinfo->offset);
++    glUseProgram(hVideo->brenderProgram.program);
++}
++
+ void StoredGLRenderGroup(br_geometry_stored* self, br_renderer* renderer, const gl_groupinfo* groupinfo) {
+     state_cache* cache = &renderer->state.cache;
+     br_device_pixelmap* screen = renderer->pixelmap->screen;
+@@ -356,8 +762,62 @@ void StoredGLRenderGroup(br_geometry_stored* self, br_renderer* renderer, const
+     BrVector4Set(&model.clear_colour, colour_target->asBack.clearColour[0], colour_target->asBack.clearColour[1],
+         colour_target->asBack.clearColour[2], colour_target->asBack.clearColour[3]);
+ 
++    if (gLights.dirty) {
++        UploadLights(hVideo->brenderProgram.uniforms.dl_count, hVideo->brenderProgram.uniforms.dl_position,
++            hVideo->brenderProgram.uniforms.dl_colour, hVideo->brenderProgram.uniforms.dl_direction);
++        gLights.dirty = 0;
++    }
++
++    model.reflectivity = gReflection.amount;
++    model.view_to_world = gReflection.view_to_world;
++    model.sky_width = gReflection.sky_width;
++    model.sky_height = gReflection.sky_height;
++    model.sky_underground = gReflection.sky_underground;
++    model.has_sky = gReflection.sky_tex != 0;
++    if (gReflection.amount > 0.0f && gReflection.sky_tex != 0) {
++        glActiveTexture(GL_TEXTURE1);
++        glBindTexture(GL_TEXTURE_2D, gReflection.sky_tex);
++        glActiveTexture(GL_TEXTURE0);
++    }
++
++    /* Wrecked Carmageddon: water is drawn last (water.c) */
++    {
++        const state_stack* drawn = stored ? &stored->state : renderer->state.current;
++        GLuint texture = drawn->prim.colour_map != NULL ? BufferStoredGLGetTexture(drawn->prim.colour_map) : screen->asFront.tex_white;
++        if (GLRENDI_WaterIntercept(self, renderer, groupinfo, &model, texture, &gReflection.camera_to_world, gReflection.sky_tex,
++                renderer->state.current)) {
++            return;
++        }
++    }
++
++    /* Wrecked Carmageddon: sun shadows */
++    if (gShadow.dirty) {
++        UploadShadow(hVideo);
++        gShadow.dirty = 0;
++    }
++    model.shadow_receive = gShadow.active && gShadow.receiving && gShadow.program != 0;
++    if (model.shadow_receive) {
++        glActiveTexture(GL_TEXTURE2);
++        glBindTexture(GL_TEXTURE_2D, gShadow.depth_tex);
++        glActiveTexture(GL_TEXTURE0);
++    }
++
+     glBufferData(GL_UNIFORM_BUFFER, sizeof(model), &model, GL_STATIC_DRAW);
+-    glDrawElements(GL_TRIANGLES, groupinfo->count, GL_UNSIGNED_SHORT, groupinfo->offset);
++    if (gTess_level > 0 && hVideo->tessProgram.program != 0) {
++        DrawTessellated(hVideo, screen, groupinfo);
++    } else {
++        glDrawElements(GL_TRIANGLES, groupinfo->count, GL_UNSIGNED_SHORT, groupinfo->offset);
++    }
++    if (gShadow.active && gShadow.casting) {
++        const state_stack* drawn = stored ? &stored->state : renderer->state.current;
++        DrawShadowCaster(hVideo, groupinfo, &model,
++            (drawn->prim.flags & PRIMF_BLEND) || (drawn->prim.colour_map != NULL && drawn->prim.colour_map->blended),
++            (drawn->prim.flags & PRIMF_DEPTH_WRITE) != 0);
++        if (gShadow.dirty) {
++            UploadShadow(hVideo); /* the first caster created the map's program */
++            gShadow.dirty = 0;
++        }
++    }
+ 
+     renderer->scene_stats.face_group_count++;
+     renderer->scene_stats.triangles_rendered_count += groupinfo->group->nfaces;
+diff --git a/drivers/glrend/video.h b/drivers/glrend/video.h
+index e8d92d0..18bcb8f 100644
+--- a/drivers/glrend/video.h
++++ b/drivers/glrend/video.h
+@@ -28,6 +28,7 @@ typedef struct _VIDEO {
+         GLint uMVP;          /* Model-View-Projection Matrix, mat4 */
+         GLint uFlipVertically;
+         GLint uDiscardPurplePixels;
++        GLint uUpscale;
+     } defaultProgram;
+ 
+     struct {
+@@ -42,6 +43,14 @@ typedef struct _VIDEO {
+ 
+         struct {
+             GLint main_texture; /* sampler2D */
++            GLint dl_count;     /* Wrecked Carmageddon: dynamic lights */
++            GLint dl_position;
++            GLint dl_colour;
++            GLint dl_direction;
++            GLint shadow_on;    /* Wrecked Carmageddon: sun shadows */
++            GLint shadow_vp;
++            GLint shadow_light;
++            GLint shadow_texel;
+         } uniforms;
+ 
+         GLuint uboScene;
+@@ -54,6 +63,16 @@ typedef struct _VIDEO {
+ 
+         GLint mainTextureBinding;
+     } brenderProgram;
++
++    /* Wrecked Carmageddon: tessellation version of brenderProgram; 0 if unavailable */
++    struct {
++        GLuint program;
++        GLint tess_level;
++        GLint dl_count;
++        GLint dl_position;
++        GLint dl_colour;
++        GLint dl_direction;
++    } tessProgram;
+ } VIDEO, *HVIDEO;
+ 
+ #pragma pack(push, 16)
+@@ -116,7 +135,15 @@ typedef struct shader_data_model {
+     alignas(4) float fog_max;
+     alignas(4) float alpha;
+     alignas(4) uint32_t prelit;
+-
++    /* Wrecked Carmageddon: environment reflections */
++    alignas(16) br_matrix4 view_to_world;
++    alignas(4) float reflectivity;
++    alignas(4) float sky_width;
++    alignas(4) float sky_height;
++    alignas(4) float sky_underground;
++    alignas(4) uint32_t has_sky;
++    alignas(4) uint32_t texture_alpha; /* Wrecked Carmageddon: see load_replacement() in sbuffer.c */
++    alignas(4) uint32_t shadow_receive; /* Wrecked Carmageddon */
+ 
+ } shader_data_model;
+ #pragma pack(pop)
+diff --git a/drivers/glrend/water.c b/drivers/glrend/water.c
+new file mode 100644
+index 0000000..c030e7f
+--- /dev/null
++++ b/drivers/glrend/water.c
+@@ -0,0 +1,383 @@
++/*
++ * Water. Draws of water materials are put aside and drawn last, with the finished scene copied into textures so the
++ * water can show it through and reflect it. The underwater view works the same way.
++ */
++#include "drv.h"
++#include "brassert.h"
++#include "underwater.frag.glsl.h"
++#include "water.frag.glsl.h"
++#include "water.vert.glsl.h"
++#include <math.h>
++#include <string.h>
++
++#define MAX_WATER_MATERIALS 32
++#define MAX_WATER_DRAWS 512
++#define MAX_RIPPLES 32
++
++extern GLint gGLREND_scene_viewport[4];
++
++typedef struct tWater_draw {
++    GLuint vao;
++    GLsizei count;
++    const void* offset;
++    GLuint texture;
++    br_matrix4 model_view;
++    br_matrix4 projection;
++    br_matrix4 map_transform;
++    int fog_enabled;
++    br_vector3 fog_colour;
++    float fog_max;
++} tWater_draw;
++
++static struct {
++    void* materials[MAX_WATER_MATERIALS]; /* stored states, as the draws see them */
++    int material_count;
++    tWater_draw draws[MAX_WATER_DRAWS];
++    int draw_count;
++    int failed;
++    GLuint program;
++    GLuint under_program;
++    GLuint empty_vao;
++    GLuint fbo;
++    GLuint colour_tex;
++    GLuint depth_tex;
++    int width;
++    int height;
++    int have_scene;
++    float time;
++    br_vector3 sun;          /* towards the sun, world */
++    float ripples[MAX_RIPPLES][4];
++    int ripple_count;
++    int camera_under;
++    float surface;
++    br_vector3 tint;
++    br_matrix34 camera_to_world;
++    br_device_pixelmap* screen;
++    GLuint sky_tex;
++    float sky_width, sky_height, sky_underground;
++    float hither, yon;
++    br_matrix4 projection; /* of the last draw */
++    int enabled;           /* between GLREND_SetWaterScene() and GLREND_DrawWater() */
++} gWater;
++
++void BR_PUBLIC_ENTRY GLREND_SetWaterMaterial(struct br_material* pMaterial) {
++    int i;
++
++    if (pMaterial == NULL || pMaterial->stored == NULL) {
++        return;
++    }
++    for (i = 0; i < gWater.material_count; i++) {
++        if (gWater.materials[i] == pMaterial->stored) {
++            return;
++        }
++    }
++    if (gWater.material_count < MAX_WATER_MATERIALS) {
++        gWater.materials[gWater.material_count++] = pMaterial->stored;
++    }
++}
++
++void BR_PUBLIC_ENTRY GLREND_ClearWaterMaterials(void) {
++    gWater.material_count = 0;
++    gWater.draw_count = 0;
++}
++
++void BR_PUBLIC_ENTRY GLREND_SetWaterScene(float pTime, const br_vector3* pTo_sun, const float* pRipples, int pRipple_count, int pCamera_under, float pSurface, const br_vector3* pTint) {
++    gWater.time = pTime;
++    gWater.sun = *pTo_sun;
++    pRipple_count = pRipple_count > MAX_RIPPLES ? MAX_RIPPLES : pRipple_count;
++    memcpy(gWater.ripples, pRipples, sizeof(float) * 4 * pRipple_count);
++    gWater.ripple_count = pRipple_count;
++    gWater.camera_under = pCamera_under;
++    gWater.surface = pSurface;
++    gWater.tint = *pTint;
++    gWater.enabled = 1;
++}
++
++/* Called for every draw; returns 1 if it put the draw aside as water */
++int GLRENDI_WaterIntercept(br_geometry_stored* self, br_renderer* renderer, const gl_groupinfo* groupinfo, const shader_data_model* model, GLuint texture,
++    const br_matrix34* camera_to_world, GLuint sky_tex, const state_stack* state) {
++    tWater_draw* d;
++    int i;
++
++    gWater.screen = renderer->pixelmap->screen;
++    gWater.camera_to_world = *camera_to_world;
++    gWater.projection = model->projection;
++    gWater.hither = state->matrix.hither_z;
++    gWater.yon = state->matrix.yon_z;
++    if (!gWater.enabled || gWater.material_count == 0 || groupinfo->stored == NULL || gWater.failed) {
++        return 0;
++    }
++    for (i = 0; i < gWater.material_count; i++) {
++        if (gWater.materials[i] == groupinfo->stored) {
++            break;
++        }
++    }
++    if (i == gWater.material_count || gWater.draw_count >= MAX_WATER_DRAWS) {
++        return 0;
++    }
++    d = &gWater.draws[gWater.draw_count++];
++    d->vao = self->gl_vao;
++    d->count = groupinfo->count;
++    d->offset = groupinfo->offset;
++    d->texture = texture;
++    d->model_view = model->model_view;
++    d->projection = model->projection;
++    d->map_transform = model->map_transform;
++    d->fog_enabled = model->fog_enabled;
++    d->fog_colour = model->fog_colour;
++    d->fog_max = model->fog_max;
++    gWater.sky_tex = sky_tex;
++    gWater.sky_width = model->sky_width;
++    gWater.sky_height = model->sky_height;
++    gWater.sky_underground = model->sky_underground;
++    return 1;
++}
++
++static GLuint Compile(GLenum type, const char* name, const char* src, GLint length) {
++    GLuint shader;
++    GLint status;
++    char log[1024];
++
++    shader = glCreateShader(type);
++    glShaderSource(shader, 1, &src, &length);
++    glCompileShader(shader);
++    glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
++    if (status != GL_TRUE) {
++        glGetShaderInfoLog(shader, sizeof(log), NULL, log);
++        BrLogPrintf("GLREND: no water effects, %s failed to compile:\n%s\n", name, log);
++        glDeleteShader(shader);
++        return 0;
++    }
++    return shader;
++}
++
++static GLuint Link(GLuint vs, GLuint fs, HVIDEO hVideo) {
++    GLuint program;
++    GLint status;
++    char log[1024];
++
++    program = glCreateProgram();
++    glAttachShader(program, vs);
++    glAttachShader(program, fs);
++    if (hVideo != NULL) {
++        /* Same attribute slots as brenderProgram: same vertex arrays */
++        glBindAttribLocation(program, hVideo->brenderProgram.attributes.aPosition, "aPosition");
++        if (hVideo->brenderProgram.attributes.aUV >= 0) {
++            glBindAttribLocation(program, hVideo->brenderProgram.attributes.aUV, "aUV");
++        }
++    }
++    glLinkProgram(program);
++    glDeleteShader(vs);
++    glDeleteShader(fs);
++    glGetProgramiv(program, GL_LINK_STATUS, &status);
++    if (status != GL_TRUE) {
++        glGetProgramInfoLog(program, sizeof(log), NULL, log);
++        BrLogPrintf("GLREND: no water effects, link failed:\n%s\n", log);
++        glDeleteProgram(program);
++        return 0;
++    }
++    return program;
++}
++
++static const char gFullscreen_vertex[] = "#version 410 core\n"
++                                         "void main() {\n"
++                                         "    vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);\n"
++                                         "    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);\n"
++                                         "}\n";
++
++static int Init(HVIDEO hVideo) {
++    GLuint vs, fs;
++
++    if (gWater.program != 0) {
++        return 1;
++    }
++    if (gWater.failed || GLVersion.major < 4) {
++        gWater.failed = 1;
++        return 0;
++    }
++    vs = Compile(GL_VERTEX_SHADER, "water.vert", WATER_VERT_GLSL, sizeof(WATER_VERT_GLSL) - 1);
++    fs = Compile(GL_FRAGMENT_SHADER, "water.frag", WATER_FRAG_GLSL, sizeof(WATER_FRAG_GLSL) - 1);
++    gWater.program = vs && fs ? Link(vs, fs, hVideo) : 0;
++    vs = Compile(GL_VERTEX_SHADER, "fullscreen.vert", gFullscreen_vertex, sizeof(gFullscreen_vertex) - 1);
++    fs = Compile(GL_FRAGMENT_SHADER, "underwater.frag", UNDERWATER_FRAG_GLSL, sizeof(UNDERWATER_FRAG_GLSL) - 1);
++    gWater.under_program = vs && fs ? Link(vs, fs, NULL) : 0;
++    if (gWater.program == 0 || gWater.under_program == 0) {
++        gWater.failed = 1;
++        return 0;
++    }
++    glGenVertexArrays(1, &gWater.empty_vao);
++    glGenFramebuffers(1, &gWater.fbo);
++    glGenTextures(1, &gWater.colour_tex);
++    glGenTextures(1, &gWater.depth_tex);
++    BrLogPrintf("GLREND: water effects on\n");
++    return 1;
++}
++
++/* Colour and depth drawn so far, into textures */
++static void CopyScene(void) {
++    int x, y, w, h;
++    float rx, ry;
++    GLenum status;
++
++    gWater.have_scene = 0;
++    if (gWater.screen == NULL) {
++        return;
++    }
++    DevicePixelmapGLGetViewport(gWater.screen, &x, &y, &rx, &ry);
++    w = (int)(2 * x + gWater.screen->pm_width * rx + 0.5f);
++    h = (int)(2 * y + gWater.screen->pm_height * ry + 0.5f);
++    if (w != gWater.width || h != gWater.height) {
++        gWater.width = w;
++        gWater.height = h;
++        glBindTexture(GL_TEXTURE_2D, gWater.colour_tex);
++        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++        glBindTexture(GL_TEXTURE_2D, gWater.depth_tex);
++        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, w, h, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++        glBindFramebuffer(GL_FRAMEBUFFER, gWater.fbo);
++        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, gWater.colour_tex, 0);
++        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, gWater.depth_tex, 0);
++        status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
++        glBindFramebuffer(GL_FRAMEBUFFER, 0);
++        glBindTexture(GL_TEXTURE_2D, 0);
++        if (status != GL_FRAMEBUFFER_COMPLETE) {
++            BrLogPrintf("GLREND: water can't see the scene (framebuffer 0x%x)\n", status);
++            gWater.width = gWater.height = 0;
++            return;
++        }
++    }
++    /* Also resolves the multisampling */
++    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
++    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, gWater.fbo);
++    glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
++    glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
++    glBindFramebuffer(GL_FRAMEBUFFER, 0);
++    gWater.have_scene = glGetError() == GL_NO_ERROR;
++}
++
++static void SetCommonUniforms(GLuint program, const br_matrix4* projection) {
++    br_matrix4 inverse, view_to_world;
++
++    BrMatrix4Inverse(&inverse, (br_matrix4*)projection);
++    BrMatrix4Copy34(&view_to_world, &gWater.camera_to_world);
++    glUniformMatrix4fv(glGetUniformLocation(program, "u_inv_projection"), 1, GL_FALSE, &inverse.m[0][0]);
++    glUniformMatrix4fv(glGetUniformLocation(program, "u_view_to_world"), 1, GL_FALSE, &view_to_world.m[0][0]);
++    glUniform4f(glGetUniformLocation(program, "u_viewport"), (float)gGLREND_scene_viewport[0], (float)gGLREND_scene_viewport[1],
++        (float)gGLREND_scene_viewport[2], (float)gGLREND_scene_viewport[3]);
++    glUniform2f(glGetUniformLocation(program, "u_drawable"), (float)(gWater.width > 0 ? gWater.width : 1), (float)(gWater.height > 0 ? gWater.height : 1));
++    glUniform1f(glGetUniformLocation(program, "u_time"), gWater.time);
++    glUniform1i(glGetUniformLocation(program, "scene_colour"), 3);
++    glUniform1i(glGetUniformLocation(program, "scene_depth"), 4);
++    glActiveTexture(GL_TEXTURE3);
++    glBindTexture(GL_TEXTURE_2D, gWater.colour_tex);
++    glActiveTexture(GL_TEXTURE4);
++    glBindTexture(GL_TEXTURE_2D, gWater.depth_tex);
++    glActiveTexture(GL_TEXTURE0);
++}
++
++void BR_PUBLIC_ENTRY GLREND_DrawWater(void) {
++    br_matrix34 world_to_view;
++    br_vector3 sun;
++    GLuint program;
++    tWater_draw* d;
++    HVIDEO hVideo;
++    int i;
++
++    gWater.enabled = 0;
++    if (gWater.draw_count == 0 || gWater.screen == NULL) {
++        gWater.draw_count = 0;
++        return;
++    }
++    hVideo = &gWater.screen->asFront.video;
++    if (!Init(hVideo)) {
++        gWater.draw_count = 0;
++        return;
++    }
++    CopyScene();
++    program = gWater.program;
++    glUseProgram(program);
++    glViewport(gGLREND_scene_viewport[0], gGLREND_scene_viewport[1], gGLREND_scene_viewport[2], gGLREND_scene_viewport[3]);
++    glEnable(GL_DEPTH_TEST);
++    glDepthFunc(GL_LEQUAL);
++    glDepthMask(GL_TRUE);
++    glDisable(GL_BLEND);
++    glDisable(GL_CULL_FACE);
++    glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
++    SetCommonUniforms(program, &gWater.draws[0].projection);
++    glUniform1i(glGetUniformLocation(program, "u_have_scene"), gWater.have_scene);
++    BrMatrix34Inverse(&world_to_view, &gWater.camera_to_world);
++    BrMatrix34ApplyV(&sun, &gWater.sun, &world_to_view);
++    BrVector3Normalise(&sun, &sun);
++    glUniform3f(glGetUniformLocation(program, "u_sun"), sun.v[0], sun.v[1], sun.v[2]);
++    glUniform4fv(glGetUniformLocation(program, "u_ripples"), gWater.ripple_count, &gWater.ripples[0][0]);
++    glUniform1i(glGetUniformLocation(program, "u_ripple_count"), gWater.ripple_count);
++    glUniform1i(glGetUniformLocation(program, "u_camera_under"), gWater.camera_under);
++    glUniform1i(glGetUniformLocation(program, "u_has_sky"), gWater.sky_tex != 0);
++    glUniform1f(glGetUniformLocation(program, "u_sky_width"), gWater.sky_width);
++    glUniform1f(glGetUniformLocation(program, "u_sky_height"), gWater.sky_height);
++    glUniform1f(glGetUniformLocation(program, "u_sky_underground"), gWater.sky_underground);
++    glUniform1f(glGetUniformLocation(program, "u_hither"), gWater.hither);
++    glUniform1f(glGetUniformLocation(program, "u_yon"), gWater.yon);
++    glUniform1i(glGetUniformLocation(program, "main_texture"), 0);
++    glUniform1i(glGetUniformLocation(program, "env_texture"), 1);
++    if (gWater.sky_tex != 0) {
++        glActiveTexture(GL_TEXTURE1);
++        glBindTexture(GL_TEXTURE_2D, gWater.sky_tex);
++        glActiveTexture(GL_TEXTURE0);
++    }
++    for (i = 0; i < gWater.draw_count; i++) {
++        d = &gWater.draws[i];
++        glUniformMatrix4fv(glGetUniformLocation(program, "u_model_view"), 1, GL_FALSE, &d->model_view.m[0][0]);
++        glUniformMatrix4fv(glGetUniformLocation(program, "u_projection"), 1, GL_FALSE, &d->projection.m[0][0]);
++        glUniformMatrix4fv(glGetUniformLocation(program, "u_map_transform"), 1, GL_FALSE, &d->map_transform.m[0][0]);
++        glUniform1i(glGetUniformLocation(program, "u_fog_enabled"), d->fog_enabled);
++        glUniform3f(glGetUniformLocation(program, "u_fog_colour"), d->fog_colour.v[0], d->fog_colour.v[1], d->fog_colour.v[2]);
++        glUniform1f(glGetUniformLocation(program, "u_fog_max"), d->fog_max);
++        glBindTexture(GL_TEXTURE_2D, d->texture);
++        glBindVertexArray(d->vao);
++        glDrawElements(GL_TRIANGLES, d->count, GL_UNSIGNED_SHORT, d->offset);
++    }
++    gWater.draw_count = 0;
++    glBindVertexArray(0);
++    glUseProgram(hVideo->brenderProgram.program);
++    GL_CHECK_ERROR();
++}
++
++void BR_PUBLIC_ENTRY GLREND_DrawUnderwater(void) {
++    HVIDEO hVideo;
++
++    if (!gWater.camera_under || gWater.screen == NULL) {
++        return;
++    }
++    hVideo = &gWater.screen->asFront.video;
++    if (!Init(hVideo)) {
++        return;
++    }
++    CopyScene();
++    if (!gWater.have_scene) {
++        return;
++    }
++    glUseProgram(gWater.under_program);
++    glViewport(gGLREND_scene_viewport[0], gGLREND_scene_viewport[1], gGLREND_scene_viewport[2], gGLREND_scene_viewport[3]);
++    glDisable(GL_DEPTH_TEST);
++    glDepthMask(GL_FALSE);
++    glDisable(GL_BLEND);
++    glDisable(GL_CULL_FACE);
++    SetCommonUniforms(gWater.under_program, &gWater.projection);
++    glUniform3f(glGetUniformLocation(gWater.under_program, "u_tint"), gWater.tint.v[0], gWater.tint.v[1], gWater.tint.v[2]);
++    glUniform1f(glGetUniformLocation(gWater.under_program, "u_surface"), gWater.surface);
++    glBindVertexArray(gWater.empty_vao);
++    glDrawArrays(GL_TRIANGLES, 0, 3);
++    glBindVertexArray(0);
++    glDepthMask(GL_TRUE);
++    glEnable(GL_DEPTH_TEST);
++    glUseProgram(0);
++    GL_CHECK_ERROR();
++}
+diff --git a/drivers/glrend/water.frag.glsl b/drivers/glrend/water.frag.glsl
+new file mode 100644
+index 0000000..6ae9727
+--- /dev/null
++++ b/drivers/glrend/water.frag.glsl
+@@ -0,0 +1,236 @@
++#version 410 core
++
++/*
++ * Water surfaces (water.c). Drawn after the rest of the scene, so the colour and depth behind the water are known.
++ */
++
++uniform sampler2D main_texture;
++uniform sampler2D env_texture;   /* the track's sky */
++uniform sampler2D scene_colour;
++uniform sampler2D scene_depth;
++
++uniform mat4 u_projection;
++uniform mat4 u_inv_projection;
++uniform mat4 u_view_to_world;
++uniform vec4 u_viewport;         /* scene viewport, pixels */
++uniform vec2 u_drawable;         /* window, pixels */
++uniform int u_have_scene;        /* scene_colour and scene_depth are valid */
++uniform float u_time;            /* seconds */
++uniform vec3 u_sun;              /* towards the sun, view space */
++uniform vec4 u_ripples[32];      /* world x, z, start time, strength */
++uniform int u_ripple_count;
++uniform int u_has_sky;
++uniform float u_sky_width;
++uniform float u_sky_height;
++uniform float u_sky_underground;
++uniform int u_fog_enabled;
++uniform vec3 u_fog_colour;
++uniform float u_fog_max;
++uniform float u_hither;
++uniform float u_yon;
++uniform int u_camera_under;
++
++in vec3 v_view;
++in vec3 v_world;
++in vec2 v_uv;
++
++out vec4 fragColour;
++
++#define FOGGING_EMULATE_3DFX_DENSITY_MULTIPLIER 80
++
++vec3 environmentColour(vec3 r) {
++    vec3 sky;
++    float elevation = asin(clamp(r.y, -1.0, 1.0));
++
++    if (u_has_sky != 0) {
++        float height = float(textureSize(env_texture, 0).y);
++        float u = atan(r.x, -r.z) / u_sky_width;
++        float v = 1.0 - (elevation + u_sky_underground) / u_sky_height;
++        sky = textureLod(env_texture, vec2(u, clamp(v, 0.5 / height, 1.0 - 0.5 / height)), 0.0).rgb;
++    } else {
++        sky = mix(vec3(0.55, 0.6, 0.65), vec3(0.3, 0.45, 0.7), clamp(r.y, 0.0, 1.0));
++    }
++    return sky;
++}
++
++float hash(vec2 p) {
++    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
++}
++
++float noise(vec2 p) {
++    vec2 i = floor(p);
++    vec2 f = fract(p);
++    vec2 u = f * f * (3.0 - 2.0 * f);
++    return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
++}
++
++/* (d height / dx, d height / dz), world units */
++vec2 waveSlope(vec2 p, float t, out float crest) {
++    /* direction, wavelength (world units, 1 = 6.9 m), height, speed */
++    const vec4 waves[6] = vec4[6](
++        vec4(0.80, 0.60, 1.90, 0.010),
++        vec4(-0.45, 0.89, 1.10, 0.007),
++        vec4(0.95, -0.30, 0.62, 0.004),
++        vec4(-0.70, -0.71, 0.37, 0.0025),
++        vec4(0.20, 0.98, 0.21, 0.0015),
++        vec4(-0.98, 0.18, 0.13, 0.0009));
++    vec2 slope = vec2(0.0);
++    crest = 0.0;
++    for (int i = 0; i < 6; i++) {
++        vec2 d = normalize(waves[i].xy);
++        float k = 6.2831853 / waves[i].z;
++        float w = sqrt(9.8 / 6.9 * k); /* deep water: speed follows wavelength */
++        float phase = dot(d, p) * k - w * t;
++        slope += d * waves[i].w * k * cos(phase);
++        crest += waves[i].w * sin(phase);
++    }
++    /* Ripples from splashes and wakes */
++    for (int i = 0; i < u_ripple_count; i++) {
++        vec4 r = u_ripples[i];
++        float age = t - r.z;
++        if (age < 0.0 || age > 4.0) {
++            continue;
++        }
++        vec2 to = p - r.xy;
++        float dist = length(to);
++        float x = dist - age * 0.45;
++        float packet = exp(-x * x / 0.006);
++        float amplitude = r.w * 0.012 * exp(-age * 0.9) / (1.0 + dist * 6.0);
++        float k = 40.0;
++        float ring = amplitude * k * cos(x * k) * packet;
++        if (dist > 1e-4) {
++            slope += to / dist * ring;
++        }
++        crest += amplitude * sin(x * k) * packet * 4.0 + r.w * exp(-age * 2.5) * exp(-dist * dist / 0.004);
++    }
++    /* Fine chop */
++    vec2 q = p * 9.0 + vec2(t * 0.3, t * 0.2);
++    float n0 = noise(q);
++    slope += vec2(noise(q + vec2(0.05, 0.0)) - n0, noise(q + vec2(0.0, 0.05)) - n0) * 0.8;
++    return slope;
++}
++
++vec3 viewAt(vec2 frag, float depth) {
++    vec2 ndc = (frag - u_viewport.xy) / u_viewport.zw * 2.0 - 1.0;
++    vec4 v = u_inv_projection * vec4(ndc, depth * 2.0 - 1.0, 1.0);
++    return v.xyz / v.w;
++}
++
++/* View space to screen pixels; false if off the scene */
++bool toScreen(vec3 p, out vec2 frag) {
++    vec4 clip = u_projection * vec4(p, 1.0);
++    if (clip.w <= 0.0) {
++        return false;
++    }
++    vec2 ndc = clip.xy / clip.w;
++    frag = u_viewport.xy + (ndc * 0.5 + 0.5) * u_viewport.zw;
++    return all(greaterThan(ndc, vec2(-1.0))) && all(lessThan(ndc, vec2(1.0)));
++}
++
++void main()
++{
++    vec3 base = texture(main_texture, v_uv).rgb;
++    vec3 face = normalize(cross(dFdx(v_world), dFdy(v_world)));
++    vec3 colour;
++
++    if (abs(face.y) < 0.7) {
++        /* A wall or rock with the water material */
++        colour = base;
++    } else {
++        float crest;
++        mat3 to_view = transpose(mat3(u_view_to_world));
++        vec2 slope = waveSlope(v_world.xz, u_time, crest);
++        vec3 n_world = normalize(vec3(-slope.x, 1.0, -slope.y));
++        vec3 n = normalize(to_view * n_world);
++        vec3 eye = normalize(v_view);
++        if (u_camera_under != 0) {
++            n = -n;
++        }
++        float facing = clamp(dot(-eye, n), 0.0, 1.0);
++        vec2 uv_here = gl_FragCoord.xy / u_drawable;
++
++        float thickness = 0.4;
++        vec3 behind = base * 0.3;
++        if (u_have_scene != 0) {
++            float d = texture(scene_depth, uv_here).r;
++            thickness = d >= 1.0 ? 2.0 : max(0.0, length(viewAt(gl_FragCoord.xy, d) - v_view));
++            /* Refraction, unless it would pick up something in front of the water */
++            vec2 bend = n.xz * 30.0 * clamp(thickness * 4.0, 0.0, 1.0) * u_drawable.y / 900.0;
++            vec2 frag2 = gl_FragCoord.xy + vec2(bend.x, -bend.y);
++            float d2 = texture(scene_depth, frag2 / u_drawable).r;
++            if (viewAt(frag2, d2).z > v_view.z - 0.002) {
++                frag2 = gl_FragCoord.xy;
++            }
++            behind = texture(scene_colour, frag2 / u_drawable).rgb;
++        }
++        /* Deep colour from the texture's average (many water textures are a caustics pattern) */
++        vec3 average = vec3(0.0);
++        for (int y = 0; y < 4; y++) {
++            for (int x = 0; x < 4; x++) {
++                average += textureLod(main_texture, vec2(x, y) * 0.25 + 0.125, 0.0).rgb;
++            }
++        }
++        vec3 deep = average / 16.0 * vec3(0.5, 0.72, 0.78) + vec3(0.0, 0.02, 0.04);
++        /* Caustics on the bottom: two drifting layers of the same texture */
++        vec2 floor_uv = v_world.xz * 3.0;
++        float light = texture(main_texture, floor_uv + vec2(u_time * 0.03, u_time * 0.02)).g
++            * texture(main_texture, floor_uv * 0.8 - vec2(u_time * 0.025, -u_time * 0.015)).g;
++        behind *= (0.75 + 0.9 * light) * vec3(0.7, 0.88, 0.92);
++        float murk = 1.0 - exp(-thickness * 16.0);
++        vec3 through = mix(behind, deep, murk);
++
++        /* Screen-space reflection, else the sky */
++        vec3 r = reflect(eye, n);
++        vec3 r_world = mat3(u_view_to_world) * r;
++        vec3 reflected = environmentColour(normalize(vec3(r_world.x, abs(r_world.y), r_world.z)));
++        if (u_have_scene != 0 && u_camera_under == 0) {
++            vec3 p = v_view;
++            float step_len = 0.04;
++            for (int i = 0; i < 28; i++) {
++                p += r * step_len;
++                step_len *= 1.22;
++                vec2 frag;
++                if (!toScreen(p, frag)) {
++                    break;
++                }
++                float d = texture(scene_depth, frag / u_drawable).r;
++                if (d >= 1.0) {
++                    continue;
++                }
++                vec3 s = viewAt(frag, d);
++                if (p.z < s.z && s.z - p.z < step_len * 2.5) {
++                    vec2 edge = abs((frag - u_viewport.xy) / u_viewport.zw * 2.0 - 1.0);
++                    float fade = (1.0 - smoothstep(0.75, 1.0, max(edge.x, edge.y))) * (1.0 - float(i) / 28.0);
++                    reflected = mix(reflected, texture(scene_colour, frag / u_drawable).rgb, fade);
++                    break;
++                }
++            }
++        }
++
++        float fresnel = 0.02 + 0.98 * pow(1.0 - facing, 5.0);
++        colour = mix(through, reflected, clamp(fresnel * 0.92 + 0.06, 0.0, 1.0));
++
++        float glint = max(dot(r, u_sun), 0.0);
++        colour += vec3(1.0, 0.95, 0.85) * (pow(glint, 1500.0) * 1.6 + pow(glint, 120.0) * 0.06) * float(u_camera_under == 0);
++
++        /* Foam at shores, walls and splash crests */
++        float foam_noise = noise(v_world.xz * 26.0 + vec2(u_time * 0.4, -u_time * 0.3)) * noise(v_world.xz * 11.0 - u_time * 0.2);
++        float shore = 1.0 - smoothstep(0.0, 0.05, thickness);
++        float foam = clamp(shore * (0.4 + 1.2 * foam_noise) + smoothstep(0.018, 0.03, crest) * foam_noise * 2.0, 0.0, 1.0);
++        colour = mix(colour, vec3(0.92, 0.95, 0.95), foam * 0.85);
++
++        if (u_camera_under != 0) {
++            /* Underside of the surface */
++            colour = mix(through, vec3(0.45, 0.7, 0.72), 0.5 + 0.3 * noise(v_world.xz * 6.0 + u_time));
++        }
++    }
++
++    if (u_fog_enabled != 0) {
++        float linear_depth = (u_hither * u_yon / (u_yon - gl_FragCoord.z * (u_yon - u_hither)));
++        float linear_depth_normalized = linear_depth / u_yon;
++        float density = 1.0 / u_fog_max * FOGGING_EMULATE_3DFX_DENSITY_MULTIPLIER;
++        float fogging_factor = 1.0 - exp(-density * linear_depth_normalized * linear_depth_normalized);
++        colour = mix(colour, u_fog_colour, clamp(fogging_factor, 0.0, 1.0));
++    }
++    fragColour = vec4(colour, 1.0);
++}
+diff --git a/drivers/glrend/water.vert.glsl b/drivers/glrend/water.vert.glsl
+new file mode 100644
+index 0000000..c4e6d3c
+--- /dev/null
++++ b/drivers/glrend/water.vert.glsl
+@@ -0,0 +1,26 @@
++#version 410 core
++
++/* Water surfaces, drawn after the rest of the scene (water.c) */
++
++uniform mat4 u_model_view;
++uniform mat4 u_projection;
++uniform mat4 u_view_to_world;
++uniform mat4 u_map_transform;
++
++in vec3 aPosition;
++in vec2 aUV;
++in vec3 aNormal;
++in vec4 aColour;
++
++out vec3 v_view;
++out vec3 v_world;
++out vec2 v_uv;
++
++void main()
++{
++    vec4 p = u_model_view * vec4(aPosition, 1.0);
++    v_view = p.xyz;
++    v_world = (u_view_to_world * p).xyz;
++    v_uv = (u_map_transform * vec4(aUV, 1.0, 0.0)).xy;
++    gl_Position = u_projection * p;
++}

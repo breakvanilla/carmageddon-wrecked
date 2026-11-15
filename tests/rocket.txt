@@ -1,0 +1,52 @@
+# Rocket launcher on Maim Street: rockets into the cars on the grid, a salvo, then into a wall
+wait 4000
+press Return          # New game
+wait 2000
+press Return          # select driver
+wait 1500
+press Return          # accept name
+wait 3000
+press Return          # race set-up screens, ending on START RACE
+wait 3000
+press Return
+wait 3000
+press Return
+wait 3000
+press Return
+wait_racing 30000
+screenshot 01_launcher
+state
+press F               # first rocket, into the cars ahead
+wait 60
+screenshot 02_flight
+wait 120
+screenshot 03_flight
+wait 200
+screenshot 04_boom
+wait 250
+screenshot 05_boom
+wait 600
+screenshot 06_smoke
+state
+hold F 1200           # a salvo
+wait 400
+screenshot 07_salvo
+wait 600
+screenshot 08_salvo
+state
+press F               # all tubes empty
+wait 3000
+state
+hold Up 2500          # drive on, then a rocket into the wall on the right
+down Right
+wait 500
+up Right
+press F
+wait 250
+screenshot 09_wall
+wait 400
+screenshot 10_wall
+state
+wait 2500
+screenshot 11_after
+state

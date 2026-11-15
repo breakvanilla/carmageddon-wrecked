@@ -1,0 +1,27 @@
+# Craters on Maim Street: a rocket into the car ahead leaves a crater, then the car drives into it
+wait 4000
+press Return          # New game
+wait 2000
+press Return          # select driver
+wait 1500
+press Return          # accept name
+wait 3000
+press Return          # race set-up screens, ending on START RACE
+wait 3000
+press Return
+wait 3000
+press Return
+wait 3000
+press Return
+wait_racing 30000
+press F               # the car ahead is blown off the crater it leaves
+wait 5000
+screenshot 01_crater
+state
+down Up               # drive in: the car's height drops in the state lines
+wait 1000
+state
+wait 300
+state
+screenshot 02_in_crater
+up Up

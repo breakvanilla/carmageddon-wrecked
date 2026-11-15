@@ -1,0 +1,32 @@
+# Water on Coastal Carnage (run with CARMA_RACE=coastal): floating, wake, spray and the view from under water
+wait 4000
+press Return          # New game
+wait 2000
+press Return          # select driver
+wait 1500
+press Return          # accept name
+wait 3000
+press Return          # race set-up screens, ending on START RACE
+wait 3000
+press Return
+wait 3000
+press Return
+wait 3000
+press Return
+wait_racing 30000
+goto_water            # into the sea, with a splash
+wait 1200
+screenshot 01_splash
+wait 2500
+screenshot 02_floating
+state
+hold Up 2500          # paddling, with a wake and spray
+screenshot 03_wake
+blast_car             # an explosion beside it
+wait 150
+screenshot 04_blast
+wait 2500
+dive_water            # under the water
+wait 600
+screenshot 05_underwater
+state
