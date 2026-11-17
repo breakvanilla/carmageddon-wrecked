@@ -144,8 +144,8 @@ cat > "$app/Contents/Info.plist" <<EOF
     <key>CFBundleIdentifier</key><string>io.github.breakvanilla.wrecked-carmageddon</string>
     <key>CFBundleIconFile</key><string>dethrace.icns</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>1.0.1</string>
-    <key>CFBundleVersion</key><string>2</string>
+    <key>CFBundleShortVersionString</key><string>1.0.2</string>
+    <key>CFBundleVersion</key><string>3</string>
     <key>LSMinimumSystemVersion</key><string>11.0</string>
     <key>LSApplicationCategoryType</key><string>public.app-category.racing-games</string>
     <key>NSHighResolutionCapable</key><true/>
