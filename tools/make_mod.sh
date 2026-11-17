@@ -15,6 +15,8 @@ sdl_src_sha256="5f5993c530f084535c65a6879e9b26ad441169b3e25d789d83287040a9ca5165
 sdl_mingw_sha256="83a5d74012311edc3c0d40ea6faecbe57ad692aa033fa5dc273cc937e3938ff2"
 python="$root/.venv/bin/python"
 jobs=4
+# Strip the build folder from source paths in the binaries (__FILE__ in asserts and logs)
+prefix_map="-ffile-prefix-map=$work/="
 
 for tool in cmake x86_64-w64-mingw32-gcc; do
     command -v "$tool" >/dev/null || { echo "Missing $tool. Run: brew install cmake mingw-w64" >&2; exit 1; }
@@ -32,11 +34,13 @@ fetch() {
 mkdir -p "$deps"
 fetch "SDL2-$sdl_version.tar.gz" "$sdl_src_sha256"
 fetch "SDL2-devel-$sdl_version-mingw.tar.gz" "$sdl_mingw_sha256"
-if [[ ! -f "$deps/sdl2-mac/lib/libSDL2.a" ]]; then
+if [[ ! -f "$deps/sdl2-mac/lib/libSDL2.a" ]] || strings -a "$deps/sdl2-mac/lib/libSDL2.a" | grep -q -F -e "$HOME/" -e "$work/"; then
+    rm -rf "$deps/sdl2-mac" "$deps/sdl2-mac-build" "$deps/SDL2-$sdl_version"
     tar xzf "$deps/SDL2-$sdl_version.tar.gz" -C "$deps"
     cmake -S "$deps/SDL2-$sdl_version" -B "$deps/sdl2-mac-build" -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
-        -DSDL_SHARED=OFF -DSDL_STATIC=ON -DSDL_TEST=OFF -DCMAKE_INSTALL_PREFIX="$deps/sdl2-mac" >/dev/null
+        -DSDL_SHARED=OFF -DSDL_STATIC=ON -DSDL_TEST=OFF -DCMAKE_INSTALL_PREFIX="$deps/sdl2-mac" \
+        -DCMAKE_C_FLAGS="$prefix_map" -DCMAKE_OBJC_FLAGS="$prefix_map" >/dev/null
     nice cmake --build "$deps/sdl2-mac-build" -j "$jobs" >/dev/null
     cmake --install "$deps/sdl2-mac-build" >/dev/null
 fi
@@ -59,14 +63,16 @@ git -C "$src/lib/BRender-v1.3.2" apply "$root/patches/brender-glrend.patch"
 cp "$root/vendor/stb_image.h" "$src/lib/BRender-v1.3.2/drivers/glrend/stb_image.h"
 
 cmake -S "$src" -B "$work/build-mac" -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
-    -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DSDL2_DIR="$deps/sdl2-mac/lib/cmake/SDL2" -DCMAKE_FIND_FRAMEWORK=NEVER >/dev/null
+    -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DSDL2_DIR="$deps/sdl2-mac/lib/cmake/SDL2" -DCMAKE_FIND_FRAMEWORK=NEVER \
+    -DCMAKE_C_FLAGS="$prefix_map" -DCMAKE_CXX_FLAGS="$prefix_map" >/dev/null
 build() {
     nice cmake --build "$1" -j "$jobs" >"$1.log" 2>&1 || { tail -30 "$1.log" >&2; exit 1; }
 }
 build "$work/build-mac"
 # Everything but SDL2.dll and Windows' own DLLs linked in statically
 cmake -S "$src" -B "$work/build-win" -DCMAKE_TOOLCHAIN_FILE="$root/tools/mingw-w64-x86_64.cmake" -DCMAKE_BUILD_TYPE=Release \
-    -DSDL2_DIR="$sdl_mingw/lib/cmake/SDL2" -DCMAKE_PREFIX_PATH="$sdl_mingw" -DCMAKE_EXE_LINKER_FLAGS="-static" >/dev/null
+    -DSDL2_DIR="$sdl_mingw/lib/cmake/SDL2" -DCMAKE_PREFIX_PATH="$sdl_mingw" -DCMAKE_EXE_LINKER_FLAGS="-static" \
+    -DCMAKE_C_FLAGS="$prefix_map" -DCMAKE_CXX_FLAGS="$prefix_map" >/dev/null
 build "$work/build-win"
 
 if otool -L "$work/build-mac/dethrace" | grep -q -e /opt/homebrew -e /usr/local; then
@@ -77,6 +83,12 @@ if x86_64-w64-mingw32-objdump -p "$work/build-win/dethrace.exe" | grep "DLL Name
     echo "The Windows build needs MinGW DLLs" >&2
     exit 1
 fi
+for exe in "$work/build-mac/dethrace" "$work/build-win/dethrace.exe"; do
+    if strings -a "$exe" | grep -q -F -e "$HOME/" -e "$work/"; then
+        echo "$exe contains build paths" >&2
+        exit 1
+    fi
+done
 
 name="wrecked-carmageddon"
 stage="$work/stage"
@@ -132,8 +144,8 @@ cat > "$app/Contents/Info.plist" <<EOF
     <key>CFBundleIdentifier</key><string>io.github.breakvanilla.wrecked-carmageddon</string>
     <key>CFBundleIconFile</key><string>dethrace.icns</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>1.0</string>
-    <key>CFBundleVersion</key><string>1</string>
+    <key>CFBundleShortVersionString</key><string>1.0.1</string>
+    <key>CFBundleVersion</key><string>2</string>
     <key>LSMinimumSystemVersion</key><string>11.0</string>
     <key>LSApplicationCategoryType</key><string>public.app-category.racing-games</string>
     <key>NSHighResolutionCapable</key><true/>

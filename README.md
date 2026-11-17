@@ -1,6 +1,6 @@
 # Wrecked Carmageddon
 
-Wrecked Carmageddon runs Carmageddon and the Carmageddon Splat Pack on modern Windows and macOS, with new graphics, weapons and destruction. It is built on [dethrace](https://github.com/dethrace-labs/dethrace), an open-source remake of the Carmageddon engine. You need your own copy of the game; this repository has no game files.
+Wrecked Carmageddon runs Carmageddon and the Carmageddon Splat Pack on modern Windows and macOS, with a roof minigun, a rocket launcher, destruction, water and new graphics. It is built on [dethrace](https://github.com/dethrace-labs/dethrace), an open-source remake of the Carmageddon engine. You need your own copy of the game; this repository has no game files.
 
 ![A rocket blows a hole in a desert wall](docs/01-rocket-blows-hole-in-desert-wall.gif)
 

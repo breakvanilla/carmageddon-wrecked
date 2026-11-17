@@ -1,15 +1,15 @@
 WRECKED CARMAGEDDON
 by breakVanilla (https://breakvanilla.com, https://github.com/breakvanilla, youtube.com/@BreakVanilla)
 
-Wrecked Carmageddon runs Carmageddon and the Carmageddon Splat Pack on modern Windows and macOS, with new graphics, weapons and destruction. It is built on dethrace, an open-source remake of the Carmageddon engine.
+Wrecked Carmageddon runs Carmageddon and the Carmageddon Splat Pack on modern Windows and macOS, with a roof minigun, a rocket launcher, destruction, water and new graphics. It is built on dethrace, an open-source remake of the Carmageddon engine.
 
+- A roof minigun (G) and a rocket launcher (F). Rockets leave craters and blow holes in walls.
+- See-through water with waves, reflections and splashes. Cars float, then sink.
+- Light from fires, explosions, sparks and police cars, and headlights (N).
+- Soft smoke and new flames on burning cars.
+- Rounded car bodies and wheels, shiny paint and sun shadows.
 - Full-resolution widescreen graphics, with smoothly upscaled menus and HUD.
 - Every texture AI-upscaled 4x (skies 8x).
-- Light from fires, explosions, sparks and police cars, and headlights (N).
-- Rounded car bodies and wheels, shiny paint and sun shadows.
-- Soft smoke and new flames on burning cars.
-- See-through water with waves, reflections and splashes. Cars float, then sink.
-- A roof minigun (G) and a rocket launcher (F). Rockets leave craters and blow holes in walls.
 
 WHAT YOU NEED
 
