@@ -2,6 +2,8 @@
 
 Wrecked Carmageddon runs Carmageddon and the Carmageddon Splat Pack on modern Windows and macOS, with new graphics, weapons and destruction. It is built on [dethrace](https://github.com/dethrace-labs/dethrace), an open-source remake of the Carmageddon engine. You need your own copy of the game; this repository has no game files.
 
+![A rocket blows a hole in a desert wall](docs/01-rocket-blows-hole-in-desert-wall.gif)
+
 - Full-resolution widescreen graphics, with smoothly upscaled menus and HUD.
 - Every texture AI-upscaled 4x (skies 8x).
 - Light from fires, explosions, sparks and police cars, and headlights (N).
@@ -9,6 +11,17 @@ Wrecked Carmageddon runs Carmageddon and the Carmageddon Splat Pack on modern Wi
 - Soft smoke and new flames on burning cars.
 - See-through water with waves, reflections and splashes. Cars float, then sink.
 - A roof minigun (G) and a rocket launcher (F). Rockets leave craters and blow holes in walls.
+
+## In action
+
+<table>
+<tr><td><img src="docs/02-homing-rockets-hit-starting-grid.gif" width="100%" alt="Homing rockets on the starting grid"><br>Homing rockets on the starting grid</td><td><img src="docs/03-rocket-blows-hole-in-ski-chalet.gif" width="100%" alt="A rocket through a ski chalet"><br>A rocket through a ski chalet</td></tr>
+<tr><td><img src="docs/04-car-floats-then-sinks.gif" width="100%" alt="Cars float, then sink"><br>Cars float, then sink</td><td><img src="docs/05-minigun-rises-from-roof-on-city-street.gif" width="100%" alt="The roof minigun rises and fires"><br>The roof minigun rises and fires</td></tr>
+<tr><td><img src="docs/06-minigun-rises-turns-and-fires.gif" width="100%" alt="The minigun turns and fires"><br>The minigun turns and fires</td><td><img src="docs/07-rocket-hits-concrete-wall.gif" width="100%" alt="A rocket hits a concrete wall"><br>A rocket hits a concrete wall</td></tr>
+<tr><td><img src="docs/08-rocket-craters-tunnel-floor-and-throws-truck.gif" width="100%" alt="A crater in the tunnel floor throws a monster truck"><br>A crater in the tunnel floor throws a monster truck</td><td><img src="docs/09-rocket-craters-snowy-road.gif" width="100%" alt="A crater in a snowy road"><br>A crater in a snowy road</td></tr>
+</table>
+
+Gameplay videos with the mod, no commentary: [city](https://youtu.be/NMI3kjMPtiE), [countryside](https://youtu.be/j5IL_x2jJIw), [snow](https://youtu.be/f8QFr3FzumY), [desert](https://youtu.be/V5kI3wSsw0E), [underground](https://youtu.be/03czFuH0KXU).
 
 Website: [breakvanilla.com](https://breakvanilla.com/). Videos: [youtube.com/@BreakVanilla](https://www.youtube.com/@BreakVanilla).
 
@@ -37,6 +50,7 @@ Download the zip for your system from Releases and follow its `README.txt` ([`to
 | `tools/test_game.sh`               | runs the game hidden from a test script                     |
 | `tools/contact_sheet.py`           | tiles test screenshots into one image                       |
 | `tests/`                           | test scripts                                                |
+| `docs/`                            | GIFs for this README                                        |
 | `setup.sh`, `setup-native.sh`      | set up the local build                                      |
 | `native.command`                   | starts the local build                                      |
 
